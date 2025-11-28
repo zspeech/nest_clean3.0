@@ -58,7 +58,11 @@ logger = get_logger(__name__)
 
 @hydra_runner(config_path="config", config_name="nest_fast-conformer")
 def main(cfg):
-    logger.info(f"Hydra config: {OmegaConf.to_yaml(cfg)}")
+    # Only print from rank 0 in DDP mode to avoid duplicate output
+    from utils.logging import is_global_rank_zero
+    if is_global_rank_zero():
+        logger.info(f"Hydra config: {OmegaConf.to_yaml(cfg)}")
+        logger.info(f"Starting training with {cfg.trainer.get('devices', 1)} device(s)")
 
     trainer = pl.Trainer(**cfg.trainer)
     exp_manager(trainer, cfg.get("exp_manager", None))
@@ -66,6 +70,10 @@ def main(cfg):
 
     # Initialize the weights of the model from another model, if provided via config
     asr_model.maybe_init_from_pretrained_checkpoint(cfg)
+
+    # Log training start from rank 0 only
+    if is_global_rank_zero():
+        logger.info(f"Training started. World size: {trainer.world_size}, Global rank: {trainer.global_rank}")
 
     trainer.fit(asr_model)
 

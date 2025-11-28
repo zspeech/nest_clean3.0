@@ -41,7 +41,7 @@ from parts.utils.manifest_utils import read_manifest
 from common.data.dataset import ConcatDataset
 from common.parts.preprocessing.manifest import get_full_path
 from core.classes.serialization import Serialization
-from utils.logging import get_logger
+from utils.logging import get_logger, is_global_rank_zero
 
 
 @dataclass
@@ -265,10 +265,12 @@ def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | 
             noise_audio, noise_len = load_noise_audio(noise_sample, sample_rate, max_audio_len)
             break
         except Exception as e:
-            logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
+            if is_global_rank_zero():
+                logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
             cnt += 1
             if cnt == max_trial:
-                logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
+                if is_global_rank_zero():
+                    logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
                 return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
     return noise_audio, noise_len
 
@@ -333,7 +335,8 @@ class AudioNoiseDataset(audio_to_text.AudioToCharDataset):
             channel_selector=self.channel_selector,
         )
         if audio.size(0) == 0:
-            logging.warning(f"Loaded audio has zero length: {sample}.")
+            if is_global_rank_zero():
+                logging.warning(f"Loaded audio has zero length: {sample}.")
 
         min_len = int(self.min_audio_len_secs * self.featurizer.sample_rate)
         audio = pad_audio(audio, min_len, self.pad_audio_mode)

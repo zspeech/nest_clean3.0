@@ -20,6 +20,18 @@ import logging as _logging
 import sys
 from typing import Optional
 
+import torch
+
+
+def is_global_rank_zero() -> bool:
+    """
+    Check if current process is global rank 0.
+    Useful for DDP training to only print/log from rank 0.
+    """
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank() == 0
+    return True  # If not distributed, always return True
+
 
 def get_logger(name: Optional[str] = None):
     """Get a logger instance."""
