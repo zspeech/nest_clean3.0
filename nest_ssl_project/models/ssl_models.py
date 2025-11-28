@@ -86,19 +86,11 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
 
     def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         # Get global rank and total number of GPU workers for IterableDataset partitioning, if applicable
-        # Global_rank and local_rank is set by LightningModule in Lightning 1.2.0+
-        # Initialize world_size - will be updated when trainer is set
+        # Global_rank and local_rank is set by LightningModule in Lightning 1.2.0
+        # Align with NeMo: directly use trainer.world_size
         self.world_size = 1
         if trainer is not None:
-            # Calculate world_size from trainer
-            if hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
-                self.world_size = trainer.num_devices * trainer.num_nodes
-            elif hasattr(trainer, 'world_size'):
-                self.world_size = trainer.world_size
-            else:
-                # Fallback: try to get from distributed environment
-                if torch.distributed.is_available() and torch.distributed.is_initialized():
-                    self.world_size = torch.distributed.get_world_size()
+            self.world_size = trainer.world_size
 
         super().__init__(cfg=cfg, trainer=trainer)
         self.preprocessor = SpeechEncDecSelfSupervisedModel.from_config_dict(self._cfg.preprocessor)

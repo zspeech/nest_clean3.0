@@ -107,38 +107,31 @@ class ModelPT(pl.LightningModule, NeuralModule, ABC):
     def set_world_size(self, trainer: Optional[pl.Trainer]):
         """
         Determines the world size from the PyTorch Lightning Trainer.
-        Similar to NeMo's ModelPT.set_world_size.
+        Align with NeMo's ModelPT.set_world_size implementation.
         
         Args:
             trainer: PyTorch Lightning Trainer object
         """
+        # Update world_size with world information from trainer
         self.world_size = 1
         
         if trainer is not None:
             if isinstance(trainer, pl.Trainer):
-                if hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
-                    if trainer.num_devices and trainer.num_nodes:
-                        self.world_size = trainer.num_devices * trainer.num_nodes
-                elif hasattr(trainer, 'world_size'):
-                    self.world_size = trainer.world_size
+                if trainer.num_devices and trainer.num_nodes:
+                    self.world_size = trainer.num_devices * trainer.num_nodes
             else:
                 logger.warning('World size can only be set by PyTorch Lightning Trainer.')
-        
-        # Also check distributed environment as fallback
-        if self.world_size == 1:
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                self.world_size = torch.distributed.get_world_size()
     
     @property
     def global_rank(self) -> int:
         """
-        Get global rank from trainer or distributed environment.
-        PyTorch Lightning sets this automatically, but we provide fallback.
+        Get global rank from trainer.
+        PyTorch Lightning sets this automatically via trainer.global_rank.
+        Align with NeMo: use trainer.global_rank directly (LightningModule provides this).
         """
         if self._trainer is not None:
-            if hasattr(self._trainer, 'global_rank'):
-                return self._trainer.global_rank
-        # Fallback to distributed environment
+            return self._trainer.global_rank
+        # Fallback to distributed environment (for compatibility)
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             return torch.distributed.get_rank()
         return 0
@@ -146,13 +139,13 @@ class ModelPT(pl.LightningModule, NeuralModule, ABC):
     @property
     def local_rank(self) -> int:
         """
-        Get local rank from trainer or distributed environment.
-        PyTorch Lightning sets this automatically, but we provide fallback.
+        Get local rank from trainer.
+        PyTorch Lightning sets this automatically via trainer.local_rank.
+        Align with NeMo: use trainer.local_rank directly (LightningModule provides this).
         """
         if self._trainer is not None:
-            if hasattr(self._trainer, 'local_rank'):
-                return self._trainer.local_rank
-        # Fallback to distributed environment
+            return self._trainer.local_rank
+        # Fallback to distributed environment (for compatibility)
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             return torch.distributed.get_rank() % torch.cuda.device_count() if torch.cuda.is_available() else 0
         return 0
