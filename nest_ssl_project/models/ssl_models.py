@@ -239,14 +239,22 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
         else:
             collate_fn = None
 
+        # Performance optimizations for DataLoader
+        num_workers = config.get('num_workers', 0)
+        pin_memory = config.get('pin_memory', False)
+        persistent_workers = config.get('persistent_workers', False) if num_workers > 0 else False
+        prefetch_factor = config.get('prefetch_factor', 2) if num_workers > 0 else None
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
-            num_workers=config.get('num_workers', 0),
-            pin_memory=config.get('pin_memory', False),
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor,
         )
 
     def setup_training_data(self, train_data_config: Optional[Union[DictConfig, Dict]]):
@@ -910,14 +918,22 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         else:
             collate_fn = None
 
+        # Performance optimizations for DataLoader
+        num_workers = config.get('num_workers', 0)
+        pin_memory = config.get('pin_memory', False)
+        persistent_workers = config.get('persistent_workers', False) if num_workers > 0 else False
+        prefetch_factor = config.get('prefetch_factor', 2) if num_workers > 0 else None
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
-            num_workers=config.get('num_workers', 0),
-            pin_memory=config.get('pin_memory', False),
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor,
         )
 
     @property
@@ -1055,11 +1071,18 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
 
         loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
 
-        # Use self.log() for PyTorch Lightning 2.x compatibility
-        self.log('train_loss', loss_value, on_step=True, on_epoch=True, prog_bar=True)
+        # Optimize logging: use dictionary for batch logging (more efficient than multiple self.log() calls)
+        # This matches NeMo's approach and reduces overhead
+        tensorboard_logs = {
+            'train_loss': loss_value,
+        }
         if self._optimizer is not None:
-            self.log('learning_rate', self._optimizer.param_groups[0]['lr'], on_step=True, on_epoch=False)
+            tensorboard_logs['learning_rate'] = self._optimizer.param_groups[0]['lr']
+        
+        # Log all metrics at once (more efficient)
+        self.log_dict(tensorboard_logs, on_step=True, on_epoch=True, prog_bar=True)
 
+        # Return loss directly (PyTorch Lightning 2.x supports this)
         return loss_value
 
     def inference_pass(
