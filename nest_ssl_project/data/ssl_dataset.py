@@ -384,7 +384,15 @@ class AudioNoiseDataset(audio_to_text.AudioToCharDataset):
         min_len = int(self.min_audio_len_secs * self.featurizer.sample_rate)
         audio = pad_audio(audio, min_len, self.pad_audio_mode)
         audio_len = torch.tensor(audio.shape[0]).long()
-        noise, noise_len = sample_noise(self.noise_data, self.featurizer.sample_rate, audio_len.item())
+        
+        # Debug: Add error handling for noise loading (prevent hanging)
+        try:
+            noise, noise_len = sample_noise(self.noise_data, self.featurizer.sample_rate, audio_len.item())
+        except Exception as e:
+            # If noise loading fails completely, use zero noise as fallback
+            logging.error(f"Failed to load noise in __getitem__({index}): {e}, using zero noise")
+            noise = torch.zeros(audio_len.item()).float()
+            noise_len = audio_len.clone()
 
         item = AudioNoiseItem(
             sample_id=str(index),
@@ -464,7 +472,15 @@ class TarredAudioNoiseDataset(audio_to_text.TarredAudioToCharDataset):
         min_len = int(self.min_audio_len_secs * self.featurizer.sample_rate)
         audio = pad_audio(audio, min_len, self.pad_audio_mode)
         audio_len = torch.tensor(audio.shape[0]).long()
-        noise, noise_len = sample_noise(self.noise_data, self.featurizer.sample_rate, audio_len.item())
+        
+        # Debug: Add error handling for noise loading (prevent hanging)
+        try:
+            noise, noise_len = sample_noise(self.noise_data, self.featurizer.sample_rate, audio_len.item())
+        except Exception as e:
+            # If noise loading fails completely, use zero noise as fallback
+            logging.error(f"Failed to load noise in _build_sample (manifest_idx={manifest_idx}): {e}, using zero noise")
+            noise = torch.zeros(audio_len.item()).float()
+            noise_len = audio_len.clone()
 
         item = AudioNoiseItem(
             sample_id=str(manifest_idx),
