@@ -88,9 +88,16 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
         # Get global rank and total number of GPU workers for IterableDataset partitioning, if applicable
         # Global_rank and local_rank is set by LightningModule in Lightning 1.2.0
         # Align with NeMo: directly use trainer.world_size
+        # Note: In DDP mode, trainer.world_size may not be available during __init__
+        # It will be set correctly when trainer is attached via set_trainer()
         self.world_size = 1
         if trainer is not None:
-            self.world_size = trainer.world_size
+            # Try to get world_size from trainer, but it may not be available during __init__
+            if hasattr(trainer, 'world_size'):
+                self.world_size = trainer.world_size
+            elif hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
+                if trainer.num_devices and trainer.num_nodes:
+                    self.world_size = trainer.num_devices * trainer.num_nodes
 
         super().__init__(cfg=cfg, trainer=trainer)
         self.preprocessor = SpeechEncDecSelfSupervisedModel.from_config_dict(self._cfg.preprocessor)
