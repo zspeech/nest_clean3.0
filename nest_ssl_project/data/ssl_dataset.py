@@ -130,6 +130,7 @@ def _audio_noise_collate_fn(batch: List[AudioNoiseItem], batch_augmentor: Any = 
             noise = torch.nn.functional.pad(noise, pad)
         noise_signal_list.append(noise[:max_audio_len])
 
+    # Stack tensors - these will be pinned if pin_memory=True in DataLoader
     audio_signal = torch.stack(audio_signal_list).float()
     audio_lengths = torch.stack(audio_lengths).long()
     noise_signal = torch.stack(noise_signal_list).float()
@@ -148,6 +149,8 @@ def _audio_noise_collate_fn(batch: List[AudioNoiseItem], batch_augmentor: Any = 
         output.noisy_audio = output.audio + output.noise
         output.noisy_audio_len = output.audio_len
 
+    # Note: PyTorch Lightning will automatically transfer to GPU using transfer_batch_to_device
+    # which uses non_blocking=True for faster async transfer
     return output
 
 
