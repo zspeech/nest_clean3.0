@@ -529,7 +529,8 @@ def get_concat_audio_noise_dataset(
     # needed to support validation Concat Datasets that arrive here as
     # [[dataset1,dataset2]] otherwise ModelPT would interfere
     if len(manifest_filepaths) == 1 and not isinstance(manifest_filepaths[0], str):
-        logging.info(f"removing an extra nesting level from {manifest_filepaths}")
+        if is_global_rank_zero():
+            logging.info(f"removing an extra nesting level from {manifest_filepaths}")
         manifest_filepaths = config['manifest_filepath'][0]
 
     for manifest_filepath in manifest_filepaths:
@@ -580,9 +581,10 @@ def get_tarred_audio_noise_dataset(config, shuffle_n, global_rank, world_size, a
             manifest_filepath = manifest_filepath[0]
 
         is_sharded_manifest = True if "_OP_" in manifest_filepath and "_CL_" in manifest_filepath else False
-        logging.info(
-            f"Loading TarredAudioNoiseDataset from {tarred_audio_filepath} and {manifest_filepath}, shard={is_sharded_manifest}"
-        )
+        if is_global_rank_zero():
+            logging.info(
+                f"Loading TarredAudioNoiseDataset from {tarred_audio_filepath} and {manifest_filepath}, shard={is_sharded_manifest}"
+            )
         dataset = TarredAudioNoiseDataset(
             noise_manifest=config.get('noise_manifest', None),
             batch_augmentor=batch_augmentor,
@@ -663,16 +665,18 @@ def get_audio_noise_dataset_from_config(
     is_concat = config.get('is_concat', False)
     if is_concat:
         if config.get('concat_sampling_technique', None) is None:
-            logging.warning(
-                f"Concat dataset requires `concat_sampling_technique` but it was not provided, using round-robin. Config: {config}"
-            )
+            if is_global_rank_zero():
+                logging.warning(
+                    f"Concat dataset requires `concat_sampling_technique` but it was not provided, using round-robin. Config: {config}"
+                )
             config['concat_sampling_technique'] = 'round-robin'
 
         if config['concat_sampling_technique'] == 'random':
             if not 'concat_sampling_probabilities' in config:
-                logging.warning(
-                    f"Concat dataset requires `concat_sampling_probabilities` list, using uniform weights. Config: {config}"
-                )
+                if is_global_rank_zero():
+                    logging.warning(
+                        f"Concat dataset requires `concat_sampling_probabilities` list, using uniform weights. Config: {config}"
+                    )
                 with open_dict(config):
                     config['concat_sampling_probabilities'] = [1 / len(config['manifest_filepath'])] * len(
                         config['manifest_filepath']
@@ -687,8 +691,9 @@ def get_audio_noise_dataset_from_config(
         if ('tarred_audio_filepaths' in config and config['tarred_audio_filepaths'] is None) or (
             'manifest_filepath' in config and config['manifest_filepath'] is None
         ):
-            logging.warning(
-                "Could not load dataset as `manifest_filepath` was None or "
+            if is_global_rank_zero():
+                logging.warning(
+                    "Could not load dataset as `manifest_filepath` was None or "
                 f"`tarred_audio_filepaths` is None. Provided config : {config}"
             )
             return None
