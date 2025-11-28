@@ -31,10 +31,12 @@ model:
     manifest_filepath: nest_ssl_project/data/dummy_ssl/train_manifest.json # path to training manifest, can be a string or list of strings
     noise_manifest: null  # the manifest for noise data, can be a string or list of strings
     sample_rate: ${model.sample_rate}
-    batch_size: 2 # reduced for small dummy dataset (increase to 8 for larger datasets)
+    batch_size: 8 # increased for better GPU utilization (reduce if OOM, increase if GPU memory available)
     shuffle: true
-    num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows). Use 8 on Linux/Mac for better performance
-    pin_memory: true
+    num_workers: 8 # set to 0 for Windows compatibility (multiprocessing issues on Windows). Use 8-16 on Linux/Mac for better IO performance
+    pin_memory: true # pin memory for faster GPU transfer
+    persistent_workers: true # keep workers alive between epochs (faster, requires num_workers > 0)
+    prefetch_factor: 4 # number of batches prefetched by each worker (higher = better GPU utilization, more CPU memory)
     use_start_end_token: false
     trim_silence: false
     max_duration: 60.0
@@ -70,12 +72,12 @@ model:
     manifest_filepath: nest_ssl_project/data/dummy_ssl/val_manifest.json
     noise_manifest: null
     sample_rate: ${model.sample_rate}
-    batch_size: 2 # reduced for small dummy dataset (increase to 8 for larger datasets)
+    batch_size: 8 # increased for better GPU utilization
     shuffle: false
-    num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
-    pin_memory: true
-    persistent_workers: false  # set to true when num_workers > 0 for better performance
-    prefetch_factor: 2  # prefetch batches to reduce GPU waiting (only effective when num_workers > 0)
+    num_workers: 8 # set to 0 for Windows compatibility (multiprocessing issues on Windows). Use 8-16 on Linux/Mac for better IO performance
+    pin_memory: true # pin memory for faster GPU transfer
+    persistent_workers: true # keep workers alive between epochs (faster, requires num_workers > 0)
+    prefetch_factor: 4 # number of batches prefetched by each worker
     use_start_end_token: false
     max_duration: 60.0
     min_duration: 1.0

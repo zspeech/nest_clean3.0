@@ -238,16 +238,33 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
         else:
             collate_fn = None
 
-        # Align with NeMo: use basic DataLoader configuration
-        # Note: persistent_workers and prefetch_factor are not used in NeMo's SSL models
+        # Optimize DataLoader for performance: use persistent_workers and prefetch_factor
+        # These optimizations significantly improve IO throughput and GPU utilization
+        num_workers = config.get('num_workers', 0)
+        pin_memory = config.get('pin_memory', False)
+        
+        # persistent_workers: keep workers alive between epochs (faster, uses more memory)
+        # Only enable if num_workers > 0 (required by PyTorch)
+        persistent_workers = config.get('persistent_workers', False)
+        if num_workers == 0:
+            persistent_workers = False
+        
+        # prefetch_factor: number of batches prefetched by each worker (default: 2)
+        # Higher values improve GPU utilization but use more CPU memory
+        prefetch_factor = config.get('prefetch_factor', 2)
+        if num_workers == 0:
+            prefetch_factor = None  # Not used when num_workers=0
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
-            num_workers=config.get('num_workers', 0),
-            pin_memory=config.get('pin_memory', False),
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor,
         )
 
     def setup_training_data(self, train_data_config: Optional[Union[DictConfig, Dict]]):
@@ -927,16 +944,33 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         else:
             collate_fn = None
 
-        # Align with NeMo: use basic DataLoader configuration
-        # Note: persistent_workers and prefetch_factor are not used in NeMo's SSL models
+        # Optimize DataLoader for performance: use persistent_workers and prefetch_factor
+        # These optimizations significantly improve IO throughput and GPU utilization
+        num_workers = config.get('num_workers', 0)
+        pin_memory = config.get('pin_memory', False)
+        
+        # persistent_workers: keep workers alive between epochs (faster, uses more memory)
+        # Only enable if num_workers > 0 (required by PyTorch)
+        persistent_workers = config.get('persistent_workers', False)
+        if num_workers == 0:
+            persistent_workers = False
+        
+        # prefetch_factor: number of batches prefetched by each worker (default: 2)
+        # Higher values improve GPU utilization but use more CPU memory
+        prefetch_factor = config.get('prefetch_factor', 2)
+        if num_workers == 0:
+            prefetch_factor = None  # Not used when num_workers=0
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
-            num_workers=config.get('num_workers', 0),
-            pin_memory=config.get('pin_memory', False),
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor,
         )
 
     @property
