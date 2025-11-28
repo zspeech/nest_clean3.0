@@ -68,7 +68,7 @@ class AudioSegment:
         
         # Load audio
         try:
-            # Try soundfile first (faster)
+            # Try soundfile first (faster, especially for seeking)
             with sf.SoundFile(str(audio_file)) as sf_file:
                 sr = sf_file.samplerate
                 if duration is not None:
@@ -79,6 +79,7 @@ class AudioSegment:
                 if offset > 0:
                     sf_file.seek(int(offset * sr))
                 
+                # Optimize: read directly as numpy array, then convert to torch once
                 samples = sf_file.read(frames=num_frames, dtype='float32')
         except Exception:
             # Fallback to librosa
@@ -89,13 +90,17 @@ class AudioSegment:
                 duration=duration,
             )
         
-        # Resample if needed
+        # Resample if needed (optimize: only resample if necessary)
         if target_sr is not None and target_sr != sr:
             samples = librosa.resample(samples, orig_sr=sr, target_sr=target_sr)
             sr = target_sr
         
-        # Convert to torch tensor
-        samples = torch.tensor(samples, dtype=torch.float32)
+        # Optimize: convert numpy array to torch tensor once (avoid double conversion)
+        # Use from_numpy for better performance (shares memory if possible)
+        if isinstance(samples, np.ndarray):
+            samples = torch.from_numpy(samples).float()
+        else:
+            samples = torch.tensor(samples, dtype=torch.float32)
         
         return cls(samples=samples, sample_rate=sr)
 

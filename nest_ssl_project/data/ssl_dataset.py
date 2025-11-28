@@ -213,7 +213,8 @@ def load_noise_audio(
                 target_sr=sample_rate,
             )
 
-            if sum(audio_segment.samples) > 0:
+            # Optimize: use torch.any() instead of sum() for faster empty check
+            if audio_segment.samples.numel() > 0 and torch.any(audio_segment.samples != 0):
                 # break if the segment is not empty
                 break
             cnt += 1
@@ -225,14 +226,17 @@ def load_noise_audio(
             target_sr=sample_rate,
         )
 
-    if sum(audio_segment.samples) == 0:
-        logging.warning(
-            f"Loaded noise audio is empty: {sample}, with sampled offset={offset}, duration={max_dur}. Adding white noise."
-        )
+    # Optimize: use torch.any() instead of sum() for faster empty check
+    if audio_segment.samples.numel() == 0 or not torch.any(audio_segment.samples != 0):
+        if is_global_rank_zero():
+            logging.warning(
+                f"Loaded noise audio is empty: {sample}, with sampled offset={offset}, duration={max_dur}. Adding white noise."
+            )
         WhiteNoisePerturbation(min_level=min_white_noise_db, max_level=max_white_noise_db).perturb(audio_segment)
 
-    noise = torch.tensor(audio_segment.samples, dtype=torch.float)
-    noise_len = torch.tensor(noise.size(0)).long()
+    # Optimize: audio_segment.samples is already a torch tensor, no need to convert again
+    noise = audio_segment.samples.float() if audio_segment.samples.dtype != torch.float32 else audio_segment.samples
+    noise_len = torch.tensor(noise.size(0), dtype=torch.long)
     # pad to max_audio_len if necessary
     if max_audio_len is not None and pad_to_max:
         if noise.size(0) < max_audio_len:
