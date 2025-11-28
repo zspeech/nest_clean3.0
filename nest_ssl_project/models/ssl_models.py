@@ -1117,13 +1117,41 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 print(f"[Rank {self.global_rank}] Forward: Quantizer completed, tokens.shape={tokens.shape}", flush=True)
 
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
+            # Always print encoder entry (critical for debugging hangs)
+            print(f"[Rank {self.global_rank}] Forward: Calling encoder (pre_encoder path)...", flush=True)
             if debug_forward:
-                print(f"[Rank {self.global_rank}] Forward: Calling encoder...", flush=True)
-            encoded, encoded_len = self.encoder(
-                audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
-            )
-            if debug_forward:
-                print(f"[Rank {self.global_rank}] Forward: Encoder completed, encoded.shape={encoded.shape}", flush=True)
+                print(f"[Rank {self.global_rank}] Forward: Encoder input - audio_signal.shape={processed_noisy_input_signal.shape}, "
+                      f"length.shape={processed_noisy_input_signal_length.shape}, "
+                      f"device={processed_noisy_input_signal.device}, "
+                      f"has_nan={torch.isnan(processed_noisy_input_signal).any().item()}, "
+                      f"has_inf={torch.isinf(processed_noisy_input_signal).any().item()}", flush=True)
+            # Synchronize before encoder call to ensure all previous operations are complete
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                if debug_forward:
+                    print(f"[Rank {self.global_rank}] Forward: CUDA synchronized before encoder", flush=True)
+            
+            try:
+                encoded, encoded_len = self.encoder(
+                    audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
+                )
+                # Always print encoder exit (critical for debugging hangs)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                print(f"[Rank {self.global_rank}] Forward: Encoder completed (pre_encoder path), encoded.shape={encoded.shape}, "
+                      f"encoded_len.shape={encoded_len.shape}", flush=True)
+            except Exception as e:
+                print(f"[Rank {self.global_rank}] ERROR in encoder call: {e}", flush=True)
+                print(f"[Rank {self.global_rank}] Encoder input details: "
+                      f"audio_signal.shape={processed_noisy_input_signal.shape}, "
+                      f"audio_signal.dtype={processed_noisy_input_signal.dtype}, "
+                      f"audio_signal.device={processed_noisy_input_signal.device}, "
+                      f"length.shape={processed_noisy_input_signal_length.shape}, "
+                      f"length.dtype={processed_noisy_input_signal_length.dtype}, "
+                      f"length.device={processed_noisy_input_signal_length.device}", flush=True)
+                import traceback
+                traceback.print_exc()
+                raise
             masks = self.pre_encoder.get_current_mask()
         else:
             if debug_forward:
@@ -1146,11 +1174,39 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 masked_signal = processed_noisy_input_signal
                 masks = torch.zeros_like(processed_noisy_input_signal)
             
+            # Always print encoder entry (critical for debugging hangs)
+            print(f"[Rank {self.global_rank}] Forward: Calling encoder (direct path)...", flush=True)
             if debug_forward:
-                print(f"[Rank {self.global_rank}] Forward: Calling encoder...", flush=True)
-            encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
-            if debug_forward:
-                print(f"[Rank {self.global_rank}] Forward: Encoder completed, encoded.shape={encoded.shape}", flush=True)
+                print(f"[Rank {self.global_rank}] Forward: Encoder input - audio_signal.shape={masked_signal.shape}, "
+                      f"length.shape={processed_noisy_input_signal_length.shape}, "
+                      f"device={masked_signal.device}, "
+                      f"has_nan={torch.isnan(masked_signal).any().item()}, "
+                      f"has_inf={torch.isinf(masked_signal).any().item()}", flush=True)
+            # Synchronize before encoder call to ensure all previous operations are complete
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                if debug_forward:
+                    print(f"[Rank {self.global_rank}] Forward: CUDA synchronized before encoder", flush=True)
+            
+            try:
+                encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
+                # Always print encoder exit (critical for debugging hangs)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                print(f"[Rank {self.global_rank}] Forward: Encoder completed (direct path), encoded.shape={encoded.shape}, "
+                      f"encoded_len.shape={encoded_len.shape}", flush=True)
+            except Exception as e:
+                print(f"[Rank {self.global_rank}] ERROR in encoder call: {e}", flush=True)
+                print(f"[Rank {self.global_rank}] Encoder input details: "
+                      f"audio_signal.shape={masked_signal.shape}, "
+                      f"audio_signal.dtype={masked_signal.dtype}, "
+                      f"audio_signal.device={masked_signal.device}, "
+                      f"length.shape={processed_noisy_input_signal_length.shape}, "
+                      f"length.dtype={processed_noisy_input_signal_length.dtype}, "
+                      f"length.device={processed_noisy_input_signal_length.device}", flush=True)
+                import traceback
+                traceback.print_exc()
+                raise
 
         if debug_forward:
             print(f"[Rank {self.global_rank}] Forward: Calling decoder...", flush=True)

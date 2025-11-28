@@ -183,6 +183,10 @@ model:
     stochastic_depth_drop_prob: 0.0
     stochastic_depth_mode: linear  # linear or uniform
     stochastic_depth_start_layer: 1
+    
+    # DDP synchronization fix: disable sync_max_audio_length to prevent hanging
+    # When true, performs NCCL all_reduce which can cause deadlock if ranks are not synchronized
+    sync_max_audio_length: false  # Set to false to avoid DDP deadlock in encoder
 
   decoder:
     _target_: nemo.collections.asr.modules.MultiSoftmaxDecoder

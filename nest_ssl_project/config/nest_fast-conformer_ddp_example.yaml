@@ -4,6 +4,10 @@
 # This config demonstrates how to configure DDP strategy with find_unused_parameters
 # for PyTorch Lightning 2.0+
 
+# IMPORTANT: When copying encoder config, make sure to include:
+#   sync_max_audio_length: false  # Prevents DDP deadlock in encoder
+# See ENCODER_HANGING_ANALYSIS.md for details
+
 # Copy the model section from nest_fast-conformer.yaml
 # model:
 #   ...
