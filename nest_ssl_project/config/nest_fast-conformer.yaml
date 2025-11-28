@@ -28,16 +28,14 @@ model:
   mask_position: pre_conv  # position to apply masking, before or after conv subsampling, choices in ['pre_conv', 'post_conv']
   
   train_ds:
-    manifest_filepath: nest_ssl_project/data/dummy_ssl/train_manifest.json # path to training manifest (relative to Nemo_nest directory, or absolute path)
+    manifest_filepath: nest_ssl_project/data/dummy_ssl/train_manifest.json # path to training manifest, can be a string or list of strings
     noise_manifest: null  # the manifest for noise data, can be a string or list of strings
     sample_rate: ${model.sample_rate}
     batch_size: 2 # reduced for small dummy dataset (increase to 8 for larger datasets)
     shuffle: true
     num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
-    # For Linux/Mac, set num_workers to 4-8 for better performance
-    # num_workers: 4  # uncomment this line on Linux/Mac
     pin_memory: true
-    persistent_workers: false  # set to true when num_workers > 0
+    persistent_workers: false  # set to true when num_workers > 0 for better performance
     prefetch_factor: 2  # prefetch batches to reduce GPU waiting (only effective when num_workers > 0)
     use_start_end_token: false
     trim_silence: false
@@ -77,10 +75,8 @@ model:
     batch_size: 2 # reduced for small dummy dataset (increase to 8 for larger datasets)
     shuffle: false
     num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
-    # For Linux/Mac, set num_workers to 2-4 for better performance
-    # num_workers: 2  # uncomment this line on Linux/Mac
     pin_memory: true
-    persistent_workers: false  # set to true when num_workers > 0
+    persistent_workers: false  # set to true when num_workers > 0 for better performance
     prefetch_factor: 2  # prefetch batches to reduce GPU waiting (only effective when num_workers > 0)
     use_start_end_token: false
     max_duration: 60.0
@@ -220,53 +216,24 @@ model:
       min_lr: 1e-6
 
 trainer:
-  devices: 1 # number of GPUs, 1 for Windows compatibility (use -1 on Linux to use all available GPUs, or "auto" to auto-detect)
+  devices: 1 # number of GPUs, 1 for Windows compatibility (use -1 on Linux to use all available GPUs)
   num_nodes: 1
   max_epochs: -1
   max_steps: 500000 # computed at runtime if not set
   val_check_interval: 1.0 # Set to 1.0 to check after every epoch, or an int for number of iterations (use 1 for small datasets)
-  accelerator: auto # "auto" to auto-detect (preferred), "gpu" to force GPU (requires CUDA), "cpu" to force CPU
-  # DDP strategy options (PyTorch Lightning 2.0+):
-  # 
-  # Option 1: Simple string (auto-detection)
-  # - "auto": Auto-select strategy (single GPU: single_device, multi-GPU: ddp, Windows: ddp_spawn)
-  # - "ddp": DistributedDataParallel (recommended for multi-GPU training on Linux)
-  # - "ddp_spawn": DDP spawn (works on Windows but slower, use for Windows multi-GPU)
-  # - "fsdp": Fully Sharded Data Parallel (for very large models)
-  #
-  # Option 2: Dictionary configuration for advanced DDP settings
-  # Use this format for custom DDP configuration:
-  # strategy:
-  #   _target_: lightning.pytorch.strategies.DDPStrategy
-  #   gradient_as_bucket_view: true  # Memory optimization: use gradient buckets as views
-  #   static_graph: false  # Set to true if model structure doesn't change (faster)
-  #
-  # Note: In PyTorch Lightning 2.0+, find_unused_parameters parameter has been removed
-  # from DDPStrategy. If you encounter unused parameter errors, ensure all model
-  # parameters are used in the forward pass, or use a custom DDP wrapper.
+  accelerator: auto
   strategy: auto # auto for Windows compatibility (ddp may not work on Windows)
-  
-  # Alternative: Use dictionary format for advanced DDP configuration
-  # Uncomment and modify the strategy above for custom DDP settings:
-  # strategy:
-  #   _target_: lightning.pytorch.strategies.DDPStrategy
-  #   gradient_as_bucket_view: true
-  #   static_graph: false
-  # Note: find_unused_parameters is not available in PyTorch Lightning 2.0+ DDPStrategy
   accumulate_grad_batches: 1
-  gradient_clip_val: 0.0 # Gradient clipping value (0.0 = disabled). Recommended: 1.0 for stable training
-  precision: 32 # 16, 32, or bf16. Use "16-mixed" or "bf16-mixed" for mixed precision training
+  gradient_clip_val: 0.0
+  precision: 32 # 16, 32, or bf16
   log_every_n_steps: 10  # Interval of logging.
   enable_progress_bar: True
   num_sanity_val_steps: 0 # number of steps to perform validation steps for sanity check the validation process before starting the training, setting to 0 disables it
   check_val_every_n_epoch: 1 # number of evaluations on validation every n epochs
-  sync_batchnorm: true # Synchronize batch normalization across GPUs (recommended for DDP training)
+  sync_batchnorm: true
   enable_checkpointing: False  # Provided by exp_manager
   logger: false  # Provided by exp_manager
   benchmark: false # needs to be false for models with variable-length speech input as it slows down training
-  # Additional DDP-related settings (if using dict strategy config above):
-  # use_distributed_sampler: true  # Use distributed sampler for data loading (default: true for DDP)
-  # replace_sampler_ddp: true  # Replace sampler with DistributedSampler (default: true)
 
 exp_manager:
   exp_dir: null
