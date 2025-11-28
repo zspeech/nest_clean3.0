@@ -298,12 +298,12 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
 
         self._train_dl = self._setup_dataloader_from_config(config=train_data_config)
 
-        # Debug: Print dataloader info from all ranks
+        # Debug: Print dataloader info from all ranks (force all ranks to print)
         if self._train_dl is not None:
             batches_per_rank = len(self._train_dl)
             dataset_size = len(self._train_dl.dataset) if hasattr(self._train_dl, 'dataset') else 'N/A'
             print(f"[Rank {self.global_rank}/{self.world_size}] Training dataloader created. "
-                  f"Batches per rank: {batches_per_rank}, Dataset size: {dataset_size}")
+                  f"Batches per rank: {batches_per_rank}, Dataset size: {dataset_size}", flush=True)
 
         # Need to set this because if using an IterableDataset, the length of the dataloader is the total number
         # of samples rather than the number of batches, and this messes up the tqdm progress bar.
