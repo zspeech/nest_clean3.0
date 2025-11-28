@@ -55,18 +55,21 @@ model:
     # batch augmentation
     batch_augmentor:
       _target_: nemo.collections.asr.modules.ssl_modules.MultiSpeakerNoiseAugmentation
-      prob: 0.5  # prob of activating the augmentation
-      noise_ratio: 0.5  # prob of applying noise aug, otherwise apply speech augmentation
-      min_r_speech: -5.0  # min energy ratio when applying speech augmentation
-      max_r_speech: 5.0  # max energy ratio when applying speech augmentation
-      min_r_noise: -5.0  # min energy ratio when applying noise augmentation
-      max_r_noise: 20.0  # max energy ratio when applying noise augmentation
-      min_mix_rate: 0.5  # min ratio of the input audio that would be augmented
-      max_mix_rate: 0.5  # max ratio of the input audio that would be augmented
-      min_num_segments: 1  # min num of segments that consititute the noise audio
-      max_num_segments: 1  # max num of segments that consititute the noise audio
-      min_num_speakers: 1  # min num of extra speakers to add
-      max_num_speakers: 1  # max num of extra speakers to add
+      prob: 0.5  # probability of activating the augmentation for each sample
+      noise_ratio: 0.5  # probability of using noise augmentation (1-noise_ratio = probability of using speech augmentation)
+      # Energy ratio (in dB) controls the relative energy between speech and noise:
+      # Positive values mean noise is louder than speech, negative values mean speech is louder than noise
+      min_r_speech: -5.0  # min energy ratio (dB) when applying speech augmentation (speech from other samples)
+      max_r_speech: 5.0  # max energy ratio (dB) when applying speech augmentation
+      min_r_noise: -5.0  # min energy ratio (dB) when applying noise augmentation (background noise)
+      max_r_noise: 20.0  # max energy ratio (dB) when applying noise augmentation
+      # Mix rate controls what portion of the audio will be augmented:
+      min_mix_rate: 0.5  # min ratio (0-1) of the input audio length that would be augmented
+      max_mix_rate: 0.5  # max ratio (0-1) of the input audio length that would be augmented
+      min_num_segments: 1  # min number of segments that constitute the noise/speech audio
+      max_num_segments: 1  # max number of segments that constitute the noise/speech audio
+      min_num_speakers: 1  # min number of extra speakers to add when using speech augmentation
+      max_num_speakers: 1  # max number of extra speakers to add when using speech augmentation
 
   validation_ds:
     manifest_filepath: nest_ssl_project/data/dummy_ssl/val_manifest.json
@@ -84,18 +87,19 @@ model:
     # batch augmentation
     batch_augmentor:
       _target_: nemo.collections.asr.modules.ssl_modules.MultiSpeakerNoiseAugmentation
-      prob: 0.5
-      noise_ratio: 0.5
-      min_r_speech: -5.0
-      max_r_speech: 5.0
-      min_r_noise: -5.0
-      max_r_noise: 20.0
-      min_mix_rate: 0.5
-      max_mix_rate: 0.5
-      min_num_segments: 1  # min num of segments that consititute the noise audio
-      max_num_segments: 1  # max num of segments that consititute the noise audio
-      min_num_speakers: 1  # min num of extra speakers to add
-      max_num_speakers: 1  # max num of extra speakers to add
+      prob: 0.5  # probability of activating the augmentation for each sample
+      noise_ratio: 0.5  # probability of using noise augmentation (1-noise_ratio = probability of using speech augmentation)
+      # Energy ratio (in dB) controls the relative energy between speech and noise:
+      min_r_speech: -5.0  # min energy ratio (dB) when applying speech augmentation
+      max_r_speech: 5.0  # max energy ratio (dB) when applying speech augmentation
+      min_r_noise: -5.0  # min energy ratio (dB) when applying noise augmentation
+      max_r_noise: 20.0  # max energy ratio (dB) when applying noise augmentation
+      min_mix_rate: 0.5  # min ratio (0-1) of the input audio length that would be augmented
+      max_mix_rate: 0.5  # max ratio (0-1) of the input audio length that would be augmented
+      min_num_segments: 1  # min number of segments that constitute the noise/speech audio
+      max_num_segments: 1  # max number of segments that constitute the noise/speech audio
+      min_num_speakers: 1  # min number of extra speakers to add when using speech augmentation
+      max_num_speakers: 1  # max number of extra speakers to add when using speech augmentation
 
   preprocessor:
     _target_: nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor
