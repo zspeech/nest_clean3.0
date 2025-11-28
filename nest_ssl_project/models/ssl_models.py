@@ -1039,6 +1039,15 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         processed_noisy_input_signal_length=None,
         apply_mask=False,
     ):
+        # CRITICAL DEBUG: Add detailed forward debugging to diagnose batch 71 hanging
+        # Check if debugging is enabled via class attribute (set in training_step for batch 71)
+        debug_forward = getattr(self, '_debug_forward', False)
+        
+        if debug_forward:
+            print(f"[Rank {self.global_rank}] Forward START: input_signal.shape={input_signal.shape if input_signal is not None else None}, "
+                  f"noisy_input_signal.shape={noisy_input_signal.shape if noisy_input_signal is not None else None}, "
+                  f"apply_mask={apply_mask}", flush=True)
+        
         has_input_signal = input_signal is not None and input_signal_length is not None
         has_processed_signal = processed_signal is not None and processed_signal_length is not None
         if (has_input_signal ^ has_processed_signal) == False:
@@ -1047,10 +1056,14 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_signal`` and ``processed_signal_len`` arguments."
             )
         if not has_processed_signal:
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling preprocessor for input_signal...", flush=True)
             processed_signal, processed_signal_length = self.preprocessor(
                 input_signal=input_signal,
                 length=input_signal_length,
             )
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Preprocessor completed, processed_signal.shape={processed_signal.shape}", flush=True)
 
         ### Following code snipet is not used but kept for future reference
         #
@@ -1077,33 +1090,74 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_noisy_input_signal`` and ``processed_noisy_input_signal_len`` arguments."
             )
         if not has_processed_noisy_input_signal:
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling preprocessor for noisy_input_signal...", flush=True)
             processed_noisy_input_signal, processed_noisy_input_signal_length = self.preprocessor(
                 input_signal=noisy_input_signal,
                 length=noisy_input_signal_length,
             )
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Preprocessor for noisy_input completed, "
+                      f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape}", flush=True)
 
         if self.pre_encoder is not None:
             # mask after convolutional sub-sampling
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Using pre_encoder path...", flush=True)
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling pre_encoder.pre_encode...", flush=True)
             feats, _ = self.pre_encoder.pre_encode(x=processed_signal, lengths=processed_signal_length)
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: pre_encoder.pre_encode completed, feats.shape={feats.shape}", flush=True)
+            
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling quantizer...", flush=True)
             _, tokens = self.quantizer(input_signal=feats.transpose(1, 2))
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Quantizer completed, tokens.shape={tokens.shape}", flush=True)
 
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling encoder...", flush=True)
             encoded, encoded_len = self.encoder(
                 audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
             )
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Encoder completed, encoded.shape={encoded.shape}", flush=True)
             masks = self.pre_encoder.get_current_mask()
         else:
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Using direct path (no pre_encoder)...", flush=True)
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling quantizer...", flush=True)
             _, tokens = self.quantizer(input_signal=processed_signal)
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Quantizer completed, tokens.shape={tokens.shape}", flush=True)
+            
             if apply_mask:
+                if debug_forward:
+                    print(f"[Rank {self.global_rank}] Forward: Calling mask_processor...", flush=True)
                 masked_signal, masks = self.mask_processor(
                     input_feats=processed_noisy_input_signal, input_lengths=processed_noisy_input_signal_length
                 )
+                if debug_forward:
+                    print(f"[Rank {self.global_rank}] Forward: mask_processor completed, masked_signal.shape={masked_signal.shape}", flush=True)
             else:
                 masked_signal = processed_noisy_input_signal
                 masks = torch.zeros_like(processed_noisy_input_signal)
+            
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Calling encoder...", flush=True)
             encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
+            if debug_forward:
+                print(f"[Rank {self.global_rank}] Forward: Encoder completed, encoded.shape={encoded.shape}", flush=True)
 
+        if debug_forward:
+            print(f"[Rank {self.global_rank}] Forward: Calling decoder...", flush=True)
         log_probs = self.decoder(encoder_output=encoded)
+        if debug_forward:
+            print(f"[Rank {self.global_rank}] Forward: Decoder completed, log_probs.shape={log_probs.shape}", flush=True)
+            print(f"[Rank {self.global_rank}] Forward END", flush=True)
 
         return log_probs, encoded_len, masks, tokens
 
@@ -1117,6 +1171,14 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         
         try:
             print(f"[Rank {self.global_rank}] Batch {batch_idx} calling forward...", flush=True)
+            # Enable forward debugging for batch 71
+            if batch_idx == 71:
+                # Temporarily enable forward debugging by setting a flag
+                # Note: This requires modifying forward to check batch_idx, which we'll do via a class attribute
+                self._debug_forward = True
+            else:
+                self._debug_forward = False
+            
             log_probs, encoded_len, masks, tokens = self.forward(
                 input_signal=batch.audio,
                 input_signal_length=batch.audio_len,
