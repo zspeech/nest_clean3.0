@@ -671,9 +671,15 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
     def transfer_batch_to_device(self, batch: Any, device: torch.device, dataloader_idx: int) -> Any:
         """
         PTL hook: https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#transfer-batch-to-device
+        
+        Optimized for fast GPU transfer:
+        - Uses non_blocking=True for async transfer (allows CPU-GPU overlap)
+        - Works with pin_memory=True in DataLoader for faster transfer
         """
         from utils.device_utils import move_data_to_device
-        batch = move_data_to_device(batch, device)
+        # non_blocking=True enables async transfer: CPU can continue working while data transfers to GPU
+        # This significantly improves GPU utilization and reduces idle time
+        batch = move_data_to_device(batch, device, non_blocking=True)
         return batch
 
     @classmethod
