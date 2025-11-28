@@ -202,22 +202,32 @@ def load_noise_audio(
 
     if max_dur is not None and duration is not None and duration > max_dur:
         cnt = 0
+        audio_segment = None
         while cnt < max_trial:
-            # randomly sample a segment of the noise
-            offset = np.random.uniform(0, duration - max_dur)
+            try:
+                # randomly sample a segment of the noise
+                offset = np.random.uniform(0, duration - max_dur)
 
-            audio_segment = AudioSegment.from_file(
-                audio_file=sample['audio_filepath'],
-                offset=offset,
-                duration=max_dur,
-                target_sr=sample_rate,
-            )
+                audio_segment = AudioSegment.from_file(
+                    audio_file=sample['audio_filepath'],
+                    offset=offset,
+                    duration=max_dur,
+                    target_sr=sample_rate,
+                )
 
-            # Optimize: use torch.any() instead of sum() for faster empty check
-            if audio_segment.samples.numel() > 0 and torch.any(audio_segment.samples != 0):
-                # break if the segment is not empty
-                break
+                # Optimize: use torch.any() instead of sum() for faster empty check
+                if audio_segment.samples.numel() > 0 and torch.any(audio_segment.samples != 0):
+                    # break if the segment is not empty
+                    break
+            except Exception as e:
+                # If loading fails, increment counter and try again
+                # The exception will be caught by sample_noise if all retries fail
+                pass
             cnt += 1
+        
+        # If all retries failed, raise exception to be caught by sample_noise
+        if audio_segment is None:
+            raise RuntimeError(f"Failed to load noise audio after {max_trial} attempts: {sample['audio_filepath']}")
     else:
         audio_segment = AudioSegment.from_file(
             audio_file=sample['audio_filepath'],
@@ -227,11 +237,11 @@ def load_noise_audio(
         )
 
     # Optimize: use torch.any() instead of sum() for faster empty check
+    # Align with NeMo: no is_global_rank_zero() check for logging (NeMo prints from all ranks)
     if audio_segment.samples.numel() == 0 or not torch.any(audio_segment.samples != 0):
-        if is_global_rank_zero():
-            logging.warning(
-                f"Loaded noise audio is empty: {sample}, with sampled offset={offset}, duration={max_dur}. Adding white noise."
-            )
+        logging.warning(
+            f"Loaded noise audio is empty: {sample}, with sampled offset={offset}, duration={max_dur}. Adding white noise."
+        )
         WhiteNoisePerturbation(min_level=min_white_noise_db, max_level=max_white_noise_db).perturb(audio_segment)
 
     # Optimize: audio_segment.samples is already a torch tensor, no need to convert again
@@ -279,12 +289,11 @@ def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | 
             noise_audio, noise_len = load_noise_audio(noise_sample, sample_rate, max_audio_len)
             break
         except Exception as e:
-            if is_global_rank_zero():
-                logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
+            # Align with NeMo: print warning from all ranks (no is_global_rank_zero() check)
+            logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
             cnt += 1
             if cnt >= max_trial:
-                if is_global_rank_zero():
-                    logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
+                logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
                 if max_audio_len is not None:
                     return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
                 else:
