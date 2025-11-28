@@ -66,9 +66,9 @@ class AudioSegment:
         if not audio_file.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_file}")
         
-        # Load audio - optimized for performance
+        # Load audio
         try:
-            # Try soundfile first (faster than librosa)
+            # Try soundfile first (faster)
             with sf.SoundFile(str(audio_file)) as sf_file:
                 sr = sf_file.samplerate
                 if duration is not None:
@@ -80,24 +80,19 @@ class AudioSegment:
                     sf_file.seek(int(offset * sr))
                 
                 samples = sf_file.read(frames=num_frames, dtype='float32')
-                
-                # Resample if needed (do it here to avoid librosa fallback)
-                if target_sr is not None and target_sr != sr:
-                    # Use librosa.resample only when necessary
-                    samples = librosa.resample(samples, orig_sr=sr, target_sr=target_sr, res_type='kaiser_fast')
-                    sr = target_sr
-        except Exception as e:
-            # Fallback to librosa only if soundfile fails
+        except Exception:
+            # Fallback to librosa
             samples, sr = librosa.load(
                 str(audio_file),
-                sr=target_sr if target_sr is not None else None,  # Load at target_sr if specified to avoid resampling
+                sr=None,
                 offset=offset,
                 duration=duration,
             )
-            # Only resample if librosa didn't load at target_sr
-            if target_sr is not None and target_sr != sr:
-                samples = librosa.resample(samples, orig_sr=sr, target_sr=target_sr, res_type='kaiser_fast')
-                sr = target_sr
+        
+        # Resample if needed
+        if target_sr is not None and target_sr != sr:
+            samples = librosa.resample(samples, orig_sr=sr, target_sr=target_sr)
+            sr = target_sr
         
         # Convert to torch tensor
         samples = torch.tensor(samples, dtype=torch.float32)
