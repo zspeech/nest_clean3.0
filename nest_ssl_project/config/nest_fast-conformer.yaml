@@ -34,7 +34,11 @@ model:
     batch_size: 2 # reduced for small dummy dataset (increase to 8 for larger datasets)
     shuffle: true
     num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
+    # For Linux/Mac, set num_workers to 4-8 for better performance
+    # num_workers: 4  # uncomment this line on Linux/Mac
     pin_memory: true
+    persistent_workers: false  # set to true when num_workers > 0
+    prefetch_factor: 2  # prefetch batches to reduce GPU waiting (only effective when num_workers > 0)
     use_start_end_token: false
     trim_silence: false
     max_duration: 60.0
@@ -73,7 +77,11 @@ model:
     batch_size: 2 # reduced for small dummy dataset (increase to 8 for larger datasets)
     shuffle: false
     num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
+    # For Linux/Mac, set num_workers to 2-4 for better performance
+    # num_workers: 2  # uncomment this line on Linux/Mac
     pin_memory: true
+    persistent_workers: false  # set to true when num_workers > 0
+    prefetch_factor: 2  # prefetch batches to reduce GPU waiting (only effective when num_workers > 0)
     use_start_end_token: false
     max_duration: 60.0
     min_duration: 1.0
