@@ -260,11 +260,21 @@ def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | 
         noise_audio: the sampled noise audio
         noise_len: the length of the sampled noise audio
     """
+    if len(noise_data) == 0:
+        # Optimize: early return if no noise data
+        if max_audio_len is not None:
+            return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
+        else:
+            return torch.zeros(1).float(), torch.tensor(1).long()
+    
     cnt = 0
-    noise_audio = torch.zeros(max_audio_len).float()
-    noise_len = torch.tensor(max_audio_len).long()
-    while cnt < max_trial and len(noise_data) > 0:
+    # Optimize: only allocate zero tensor if we actually need it (after all retries fail)
+    noise_audio = None
+    noise_len = None
+    
+    while cnt < max_trial:
         try:
+            # Optimize: use random.randint (same as before, but cleaner logic)
             noise_sample = noise_data[np.random.randint(len(noise_data))]
             noise_audio, noise_len = load_noise_audio(noise_sample, sample_rate, max_audio_len)
             break
@@ -272,10 +282,21 @@ def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | 
             if is_global_rank_zero():
                 logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
             cnt += 1
-            if cnt == max_trial:
+            if cnt >= max_trial:
                 if is_global_rank_zero():
                     logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
-                return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
+                if max_audio_len is not None:
+                    return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
+                else:
+                    return torch.zeros(1).float(), torch.tensor(1).long()
+    
+    # Fallback if somehow we didn't get noise (shouldn't happen, but safety check)
+    if noise_audio is None or noise_len is None:
+        if max_audio_len is not None:
+            return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
+        else:
+            return torch.zeros(1).float(), torch.tensor(1).long()
+    
     return noise_audio, noise_len
 
 
