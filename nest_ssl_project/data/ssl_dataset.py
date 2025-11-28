@@ -204,7 +204,10 @@ def load_noise_audio(
         cnt = 0
         audio_segment = None
         last_exception = None
-        while cnt < max_trial:
+        # CRITICAL FIX: Limit max_trial to prevent infinite loops (reduce from 100 to 10)
+        # If a file is corrupted, 100 retries can take too long and cause hanging
+        max_trial_limited = min(max_trial, 10)  # Cap at 10 retries to prevent hanging
+        while cnt < max_trial_limited:
             try:
                 # randomly sample a segment of the noise
                 offset = np.random.uniform(0, duration - max_dur)
@@ -229,7 +232,7 @@ def load_noise_audio(
         
         # If all retries failed (either all exceptions or all empty), raise exception to be caught by sample_noise
         if audio_segment is None:
-            error_msg = f"Failed to load noise audio after {max_trial} attempts: {sample['audio_filepath']}"
+            error_msg = f"Failed to load noise audio after {max_trial_limited} attempts: {sample['audio_filepath']}"
             if last_exception is not None:
                 error_msg += f", last exception: {last_exception}"
             raise RuntimeError(error_msg)
@@ -291,7 +294,11 @@ def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | 
     noise_audio = None
     noise_len = None
     
-    while cnt < max_trial:
+    # CRITICAL FIX: Limit max_trial to prevent infinite loops (reduce from 20 to 5)
+    # If noise files are corrupted, 20 retries can take too long and cause hanging
+    max_trial_limited = min(max_trial, 5)  # Cap at 5 retries to prevent hanging
+    
+    while cnt < max_trial_limited:
         try:
             # Optimize: use random.randint (same as before, but cleaner logic)
             noise_sample = noise_data[np.random.randint(len(noise_data))]
@@ -299,10 +306,10 @@ def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | 
             break
         except Exception as e:
             # Align with NeMo: print warning from all ranks (no is_global_rank_zero() check)
-            logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
+            logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying ({cnt+1}/{max_trial_limited}).")
             cnt += 1
-            if cnt >= max_trial:
-                logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
+            if cnt >= max_trial_limited:
+                logging.warning(f"Failed to load noise audio after {max_trial_limited} attempts, returning zero noise.")
                 if max_audio_len is not None:
                     return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
                 else:

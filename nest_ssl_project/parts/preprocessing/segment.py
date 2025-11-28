@@ -66,7 +66,7 @@ class AudioSegment:
         if not audio_file.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_file}")
         
-        # Load audio
+        # Load audio with timeout protection
         try:
             # Try soundfile first (faster, especially for seeking)
             with sf.SoundFile(str(audio_file)) as sf_file:
@@ -77,18 +77,32 @@ class AudioSegment:
                     num_frames = -1
                 
                 if offset > 0:
+                    # CRITICAL FIX: Validate offset to prevent hanging on corrupted files
+                    max_offset = sf_file.frames / sr if sf_file.frames > 0 else 0
+                    if offset >= max_offset:
+                        raise ValueError(f"Offset {offset} exceeds file duration {max_offset}")
                     sf_file.seek(int(offset * sr))
                 
                 # Optimize: read directly as numpy array, then convert to torch once
                 samples = sf_file.read(frames=num_frames, dtype='float32')
-        except Exception:
+                
+                # CRITICAL FIX: Validate samples to prevent hanging on corrupted files
+                if len(samples) == 0:
+                    raise ValueError(f"Read zero samples from {audio_file}")
+        except Exception as e:
             # Fallback to librosa
-            samples, sr = librosa.load(
-                str(audio_file),
-                sr=None,
-                offset=offset,
-                duration=duration,
-            )
+            try:
+                samples, sr = librosa.load(
+                    str(audio_file),
+                    sr=None,
+                    offset=offset,
+                    duration=duration,
+                )
+                if len(samples) == 0:
+                    raise ValueError(f"Librosa read zero samples from {audio_file}")
+            except Exception as librosa_e:
+                # If both fail, raise with combined error message
+                raise RuntimeError(f"Failed to load audio from {audio_file}: soundfile error={e}, librosa error={librosa_e}")
         
         # Resample if needed (optimize: only resample if necessary)
         if target_sr is not None and target_sr != sr:
