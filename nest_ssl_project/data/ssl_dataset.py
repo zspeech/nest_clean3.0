@@ -203,6 +203,7 @@ def load_noise_audio(
     if max_dur is not None and duration is not None and duration > max_dur:
         cnt = 0
         audio_segment = None
+        last_exception = None
         while cnt < max_trial:
             try:
                 # randomly sample a segment of the noise
@@ -219,22 +220,30 @@ def load_noise_audio(
                 if audio_segment.samples.numel() > 0 and torch.any(audio_segment.samples != 0):
                     # break if the segment is not empty
                     break
+                # If segment is empty, continue to next iteration
             except Exception as e:
-                # If loading fails, increment counter and try again
-                # The exception will be caught by sample_noise if all retries fail
-                pass
+                # If loading fails, save exception and try again
+                last_exception = e
+                audio_segment = None  # Reset to None on exception
             cnt += 1
         
-        # If all retries failed, raise exception to be caught by sample_noise
+        # If all retries failed (either all exceptions or all empty), raise exception to be caught by sample_noise
         if audio_segment is None:
-            raise RuntimeError(f"Failed to load noise audio after {max_trial} attempts: {sample['audio_filepath']}")
+            error_msg = f"Failed to load noise audio after {max_trial} attempts: {sample['audio_filepath']}"
+            if last_exception is not None:
+                error_msg += f", last exception: {last_exception}"
+            raise RuntimeError(error_msg)
     else:
-        audio_segment = AudioSegment.from_file(
-            audio_file=sample['audio_filepath'],
-            offset=offset,
-            duration=duration,
-            target_sr=sample_rate,
-        )
+        try:
+            audio_segment = AudioSegment.from_file(
+                audio_file=sample['audio_filepath'],
+                offset=offset,
+                duration=duration,
+                target_sr=sample_rate,
+            )
+        except Exception as e:
+            # If loading fails, raise exception to be caught by sample_noise
+            raise RuntimeError(f"Failed to load noise audio: {sample['audio_filepath']}, exception: {e}")
 
     # Optimize: use torch.any() instead of sum() for faster empty check
     # Align with NeMo: no is_global_rank_zero() check for logging (NeMo prints from all ranks)
