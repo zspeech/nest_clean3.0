@@ -271,6 +271,14 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
             -   :class:`~nemo.collections.asr.data.audio_to_text.TarredAudioToBPEDataset`
             -   :class:`~nemo.collections.asr.data.audio_to_text_dali.AudioToCharDALIDataset`
         """
+        # Update world_size from trainer if available (trainer may be set after __init__)
+        if self._trainer is not None:
+            if hasattr(self._trainer, 'world_size'):
+                self.world_size = self._trainer.world_size
+            elif hasattr(self._trainer, 'num_devices') and hasattr(self._trainer, 'num_nodes'):
+                if self._trainer.num_devices and self._trainer.num_nodes:
+                    self.world_size = self._trainer.num_devices * self._trainer.num_nodes
+        
         if 'shuffle' not in train_data_config:
             train_data_config['shuffle'] = True
 
