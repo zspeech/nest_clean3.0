@@ -222,7 +222,16 @@ trainer:
   max_steps: 500000 # computed at runtime if not set
   val_check_interval: 1.0 # Set to 1.0 to check after every epoch, or an int for number of iterations (use 1 for small datasets)
   accelerator: auto
+  # Strategy configuration:
+  # - Use "auto" for Windows compatibility (ddp may not work on Windows)
+  # - For Linux/Multi-GPU, use DDPStrategy with bucket optimizations (see nest_fast-conformer_ddp_example.yaml)
   strategy: auto # auto for Windows compatibility (ddp may not work on Windows)
+  # For Linux/Multi-GPU DDP training, uncomment and use:
+  # strategy:
+  #   _target_: lightning.pytorch.strategies.DDPStrategy
+  #   gradient_as_bucket_view: true  # Memory optimization: use gradient buckets as views (reduces memory usage, aligns with NeMo)
+  #   static_graph: false  # Set to true if model structure doesn't change (faster, but requires fixed computation graph)
+  #   bucket_cap_mb: 25  # Maximum bucket size in MB (default: 25, can increase to 50-100MB for large models)
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
   precision: 32 # 16, 32, or bf16. Use "16-mixed" or "bf16-mixed" for 2x speedup (if GPU supports it)
