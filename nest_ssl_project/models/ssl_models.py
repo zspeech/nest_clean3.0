@@ -86,10 +86,19 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
 
     def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         # Get global rank and total number of GPU workers for IterableDataset partitioning, if applicable
-        # Global_rank and local_rank is set by LightningModule in Lightning 1.2.0
+        # Global_rank and local_rank is set by LightningModule in Lightning 1.2.0+
+        # Initialize world_size - will be updated when trainer is set
         self.world_size = 1
         if trainer is not None:
-            self.world_size = trainer.world_size
+            # Calculate world_size from trainer
+            if hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
+                self.world_size = trainer.num_devices * trainer.num_nodes
+            elif hasattr(trainer, 'world_size'):
+                self.world_size = trainer.world_size
+            else:
+                # Fallback: try to get from distributed environment
+                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                    self.world_size = torch.distributed.get_world_size()
 
         super().__init__(cfg=cfg, trainer=trainer)
         self.preprocessor = SpeechEncDecSelfSupervisedModel.from_config_dict(self._cfg.preprocessor)
@@ -193,32 +202,28 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
             )
             return dataset
 
-        # Instantiate tarred dataset loader or normal dataset loader
+        # Use SSL dataset loader which properly handles DDP with global_rank and world_size
+        from data import ssl_dataset
+        
+        # Get batch_augmentor from config if available
+        batch_augmentor = None
+        if 'batch_augmentor' in config:
+            from core.classes.serialization import Serialization
+            batch_augmentor = Serialization.from_config_dict(config['batch_augmentor'])
+        
+        # Use SSL dataset loader which handles DDP correctly
+        dataset = ssl_dataset.get_audio_noise_dataset_from_config(
+            config,
+            global_rank=self.global_rank,
+            world_size=self.world_size,
+        )
+        
+        if dataset is None:
+            return None
+        
+        # For tarred datasets, shuffle should be False
         if config.get('is_tarred', False):
-            if ('tarred_audio_filepaths' in config and config['tarred_audio_filepaths'] is None) or (
-                'manifest_filepath' in config and config['manifest_filepath'] is None
-            ):
-                logging.warning(
-                    "Could not load dataset as `manifest_filepath` was None or "
-                    f"`tarred_audio_filepaths` is None. Provided config : {config}"
-                )
-                return None
-
-            shuffle_n = config.get('shuffle_n', 4 * config['batch_size']) if shuffle else 0
-            dataset = audio_to_text_dataset.get_tarred_dataset(
-                config=config,
-                shuffle_n=shuffle_n,
-                global_rank=self.global_rank,
-                world_size=self.world_size,
-                augmentor=augmentor,
-            )
             shuffle = False
-        else:
-            if 'manifest_filepath' in config and config['manifest_filepath'] is None:
-                logging.warning(f"Could not load dataset as `manifest_filepath` was None. Provided config : {config}")
-                return None
-
-            dataset = audio_to_text_dataset.get_char_dataset(config=config, augmentor=augmentor)
 
         if hasattr(dataset, 'collate_fn'):
             collate_fn = dataset.collate_fn

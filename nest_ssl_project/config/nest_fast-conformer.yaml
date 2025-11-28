@@ -218,24 +218,33 @@ trainer:
   max_steps: 500000 # computed at runtime if not set
   val_check_interval: 1.0 # Set to 1.0 to check after every epoch, or an int for number of iterations (use 1 for small datasets)
   accelerator: auto # "auto" to auto-detect (preferred), "gpu" to force GPU (requires CUDA), "cpu" to force CPU
-  # DDP strategy options:
+  # DDP strategy options (PyTorch Lightning 2.0+):
+  # 
+  # Option 1: Simple string (auto-detection)
   # - "auto": Auto-select strategy (single GPU: single_device, multi-GPU: ddp, Windows: ddp_spawn)
   # - "ddp": DistributedDataParallel (recommended for multi-GPU training on Linux)
-  # - "ddp_find_unused_parameters_false": DDP with find_unused_parameters=False (faster, default in PyTorch Lightning 2.0+)
-  # - "ddp_find_unused_parameters_true": DDP with find_unused_parameters=True (slower but needed if some parameters don't receive gradients)
   # - "ddp_spawn": DDP spawn (works on Windows but slower, use for Windows multi-GPU)
   # - "fsdp": Fully Sharded Data Parallel (for very large models)
-  # For advanced DDP configuration, you can use a dict:
+  #
+  # Option 2: Dictionary configuration for advanced DDP settings
+  # Use this format for custom DDP configuration:
   # strategy:
   #   _target_: lightning.pytorch.strategies.DDPStrategy
-  #   find_unused_parameters: false  # Set to true if some model parameters don't receive gradients
   #   gradient_as_bucket_view: true  # Memory optimization: use gradient buckets as views
   #   static_graph: false  # Set to true if model structure doesn't change (faster)
-  #   ddp_comm_hook: null  # Communication hook for gradient synchronization (e.g., "fp16_compress_hook")
-  #   ddp_comm_state: null  # State for communication hook
-  #   ddp_comm_wrapper: null  # Wrapper for communication hook
-  #   model_averaging_period: null  # Period for model averaging (null = disabled)
+  #
+  # Note: In PyTorch Lightning 2.0+, find_unused_parameters parameter has been removed
+  # from DDPStrategy. If you encounter unused parameter errors, ensure all model
+  # parameters are used in the forward pass, or use a custom DDP wrapper.
   strategy: auto # auto for Windows compatibility (ddp may not work on Windows)
+  
+  # Alternative: Use dictionary format for advanced DDP configuration
+  # Uncomment and modify the strategy above for custom DDP settings:
+  # strategy:
+  #   _target_: lightning.pytorch.strategies.DDPStrategy
+  #   gradient_as_bucket_view: true
+  #   static_graph: false
+  # Note: find_unused_parameters is not available in PyTorch Lightning 2.0+ DDPStrategy
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0 # Gradient clipping value (0.0 = disabled). Recommended: 1.0 for stable training
   precision: 32 # 16, 32, or bf16. Use "16-mixed" or "bf16-mixed" for mixed precision training

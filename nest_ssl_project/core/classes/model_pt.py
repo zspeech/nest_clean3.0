@@ -101,6 +101,61 @@ class ModelPT(pl.LightningModule, NeuralModule, ABC):
     def set_trainer(self, trainer: Optional[pl.Trainer]):
         """Set the trainer instance."""
         self._trainer = trainer
+        # Update world_size when trainer is set
+        self.set_world_size(trainer)
+    
+    def set_world_size(self, trainer: Optional[pl.Trainer]):
+        """
+        Determines the world size from the PyTorch Lightning Trainer.
+        Similar to NeMo's ModelPT.set_world_size.
+        
+        Args:
+            trainer: PyTorch Lightning Trainer object
+        """
+        self.world_size = 1
+        
+        if trainer is not None:
+            if isinstance(trainer, pl.Trainer):
+                if hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
+                    if trainer.num_devices and trainer.num_nodes:
+                        self.world_size = trainer.num_devices * trainer.num_nodes
+                elif hasattr(trainer, 'world_size'):
+                    self.world_size = trainer.world_size
+            else:
+                logger.warning('World size can only be set by PyTorch Lightning Trainer.')
+        
+        # Also check distributed environment as fallback
+        if self.world_size == 1:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                self.world_size = torch.distributed.get_world_size()
+    
+    @property
+    def global_rank(self) -> int:
+        """
+        Get global rank from trainer or distributed environment.
+        PyTorch Lightning sets this automatically, but we provide fallback.
+        """
+        if self._trainer is not None:
+            if hasattr(self._trainer, 'global_rank'):
+                return self._trainer.global_rank
+        # Fallback to distributed environment
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            return torch.distributed.get_rank()
+        return 0
+    
+    @property
+    def local_rank(self) -> int:
+        """
+        Get local rank from trainer or distributed environment.
+        PyTorch Lightning sets this automatically, but we provide fallback.
+        """
+        if self._trainer is not None:
+            if hasattr(self._trainer, 'local_rank'):
+                return self._trainer.local_rank
+        # Fallback to distributed environment
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            return torch.distributed.get_rank() % torch.cuda.device_count() if torch.cuda.is_available() else 0
+        return 0
 
     def _update_dataset_config(self, dataset_name: str, config: Optional[Union[DictConfig, Dict]]):
         """

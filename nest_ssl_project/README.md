@@ -206,12 +206,24 @@ python train.py \
     trainer.sync_batchnorm=true \
     trainer.max_epochs=100
 
-# 高级 DDP 配置（如果模型有未使用的参数）
+# 高级 DDP 配置（自定义 DDP 策略）
+# 注意：PyTorch Lightning 2.0+ 中 find_unused_parameters 参数已被移除
+# 如果遇到未使用参数的错误，请确保模型的所有参数都在前向传播中被使用
+# 方法1：通过配置文件设置（推荐）
+# 在 config/nest_fast-conformer.yaml 中取消注释并修改 strategy 部分：
+# strategy:
+#   _target_: lightning.pytorch.strategies.DDPStrategy
+#   gradient_as_bucket_view: true
+#   static_graph: false
+#
+# 方法2：通过命令行覆盖
 python train.py \
     model.train_ds.manifest_filepath=train.json \
     trainer.devices=-1 \
     trainer.accelerator="gpu" \
-    trainer.strategy="ddp_find_unused_parameters_true" \
+    trainer.strategy._target_=lightning.pytorch.strategies.DDPStrategy \
+    trainer.strategy.gradient_as_bucket_view=true \
+    trainer.strategy.static_graph=false \
     trainer.sync_batchnorm=true \
     trainer.max_epochs=100
 
