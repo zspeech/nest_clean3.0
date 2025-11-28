@@ -199,6 +199,8 @@ def load_noise_audio(
 
     if max_dur is not None and duration is not None and duration > max_dur:
         cnt = 0
+        # Optimized: reduce max_trial for faster loading (default 100 -> 10)
+        max_trial = min(max_trial, 10)
         while cnt < max_trial:
             # randomly sample a segment of the noise
             offset = np.random.uniform(0, duration - max_dur)
@@ -241,32 +243,46 @@ def load_noise_audio(
     return noise, noise_len
 
 
-def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | None = None, max_trial: int = 20):
+def sample_noise(noise_data: List[Dict], sample_rate: int, max_audio_len: int | None = None, max_trial: int = 5):
     """
     Randomly sample noise audio from the noise manifest.
+    Optimized: Reduced max_trial from 20 to 5 for faster loading.
     Args:
         noise_data: the noise manifest data
         sample_rate: target sample rate to resample the noise audio
         max_audio_len: the maximum audio length to load
-        max_trial: the maximum number of trials to load noise audio before giving up
+        max_trial: the maximum number of trials to load noise audio before giving up (reduced for performance)
     Returns:
         noise_audio: the sampled noise audio
         noise_len: the length of the sampled noise audio
     """
     cnt = 0
-    noise_audio = torch.zeros(max_audio_len).float()
-    noise_len = torch.tensor(max_audio_len).long()
-    while cnt < max_trial and len(noise_data) > 0:
+    noise_audio = torch.zeros(max_audio_len).float() if max_audio_len is not None else torch.zeros(1).float()
+    noise_len = torch.tensor(max_audio_len).long() if max_audio_len is not None else torch.tensor(1).long()
+    
+    if len(noise_data) == 0:
+        return noise_audio, noise_len
+    
+    while cnt < max_trial:
         try:
             noise_sample = noise_data[np.random.randint(len(noise_data))]
-            noise_audio, noise_len = load_noise_audio(noise_sample, sample_rate, max_audio_len)
-            break
+            noise_audio, noise_len = load_noise_audio(noise_sample, sample_rate, max_audio_len, max_trial=3)
+            # Early exit if successfully loaded
+            if noise_len.item() > 0:
+                break
         except Exception as e:
-            logging.warning(f"Error loading noise audio with config {noise_sample} and exception: {e}, retrying.")
-            cnt += 1
-            if cnt == max_trial:
-                logging.warning(f"Failed to load noise audio after {max_trial} attempts, returning zero noise.")
-                return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
+            # Only log warning after first few failures to reduce logging overhead
+            if cnt >= max_trial - 1:
+                logging.warning(f"Error loading noise audio after {max_trial} attempts: {e}, returning zero noise.")
+        cnt += 1
+    
+    if cnt >= max_trial and noise_len.item() == 0:
+        # Return zero noise if all attempts failed
+        if max_audio_len is not None:
+            return torch.zeros(max_audio_len).float(), torch.tensor(max_audio_len).long()
+        else:
+            return torch.zeros(1).float(), torch.tensor(1).long()
+    
     return noise_audio, noise_len
 
 
