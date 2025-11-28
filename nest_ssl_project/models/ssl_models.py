@@ -1125,19 +1125,17 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                       f"device={processed_noisy_input_signal.device}, "
                       f"has_nan={torch.isnan(processed_noisy_input_signal).any().item()}, "
                       f"has_inf={torch.isinf(processed_noisy_input_signal).any().item()}", flush=True)
-            # Synchronize before encoder call to ensure all previous operations are complete
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                if debug_forward:
-                    print(f"[Rank {self.global_rank}] Forward: CUDA synchronized before encoder", flush=True)
+            # NOTE: Removed torch.cuda.synchronize() here as it can cause deadlock in DDP
+            # If a rank hangs before reaching this point, other ranks will wait indefinitely
+            # PyTorch Lightning and DDP handle synchronization automatically
+            # If synchronization is needed, use DDP barrier instead: torch.distributed.barrier()
             
             try:
                 encoded, encoded_len = self.encoder(
                     audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
                 )
                 # Always print encoder exit (critical for debugging hangs)
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                # NOTE: Removed torch.cuda.synchronize() here to avoid DDP deadlock
                 print(f"[Rank {self.global_rank}] Forward: Encoder completed (pre_encoder path), encoded.shape={encoded.shape}, "
                       f"encoded_len.shape={encoded_len.shape}", flush=True)
             except Exception as e:
@@ -1182,17 +1180,15 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                       f"device={masked_signal.device}, "
                       f"has_nan={torch.isnan(masked_signal).any().item()}, "
                       f"has_inf={torch.isinf(masked_signal).any().item()}", flush=True)
-            # Synchronize before encoder call to ensure all previous operations are complete
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                if debug_forward:
-                    print(f"[Rank {self.global_rank}] Forward: CUDA synchronized before encoder", flush=True)
+            # NOTE: Removed torch.cuda.synchronize() here as it can cause deadlock in DDP
+            # If a rank hangs before reaching this point, other ranks will wait indefinitely
+            # PyTorch Lightning and DDP handle synchronization automatically
+            # If synchronization is needed, use DDP barrier instead: torch.distributed.barrier()
             
             try:
                 encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
                 # Always print encoder exit (critical for debugging hangs)
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                # NOTE: Removed torch.cuda.synchronize() here to avoid DDP deadlock
                 print(f"[Rank {self.global_rank}] Forward: Encoder completed (direct path), encoded.shape={encoded.shape}, "
                       f"encoded_len.shape={encoded_len.shape}", flush=True)
             except Exception as e:
