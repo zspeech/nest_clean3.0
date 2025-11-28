@@ -5,7 +5,11 @@
 ## ✨ 核心特点
 
 - ✅ **完全独立**: 不依赖 NeMo 框架，可直接运行
-- ✅ **与 NeMo 一致**: 配置、架构、功能 100% 一致
+- ✅ **与 NeMo 100% 对齐**: 配置、架构、功能、参数完全一致
+  - ✅ DDP配置与NeMo原版一致（`strategy: auto`, `sync_batchnorm: true`）
+  - ✅ DataLoader配置与NeMo一致（不使用`persistent_workers`和`prefetch_factor`）
+  - ✅ 数据加载逻辑与NeMo一致（`max_trial: 20/100`，默认`librosa.resample`）
+  - ✅ 模型架构与NeMo一致（preprocessor双重调用等设计限制）
 - ✅ **结构清晰**: 模块化设计，易于理解和维护
 - ✅ **Windows 优化**: 已针对 Windows 环境优化配置
 - ✅ **功能完整**: 支持完整的 SSL 训练流程
@@ -187,8 +191,18 @@ python train.py \
     trainer.accelerator="gpu" \
     trainer.max_epochs=50
 
-# 多 GPU 训练（DDP）
+# 多 GPU 训练（DDP）- 与NeMo配置一致
 # Linux/Mac 多 GPU 训练（推荐）
+# 注意：默认配置使用 strategy: auto，PyTorch Lightning会自动选择DDP
+python train.py \
+    model.train_ds.manifest_filepath=train.json \
+    trainer.devices=-1 \
+    trainer.accelerator="gpu" \
+    trainer.strategy="auto" \
+    trainer.sync_batchnorm=true \
+    trainer.max_epochs=100
+
+# 或显式指定DDP策略（与NeMo其他SSL配置一致）
 python train.py \
     model.train_ds.manifest_filepath=train.json \
     trainer.devices=-1 \
@@ -206,26 +220,9 @@ python train.py \
     trainer.sync_batchnorm=true \
     trainer.max_epochs=100
 
-# 高级 DDP 配置（自定义 DDP 策略）
+# 高级 DDP 配置（可选优化，参考 nest_fast-conformer_ddp_example.yaml）
 # 注意：PyTorch Lightning 2.0+ 中 find_unused_parameters 参数已被移除
-# 如果遇到未使用参数的错误，请确保模型的所有参数都在前向传播中被使用
-# 方法1：通过配置文件设置（推荐）
-# 在 config/nest_fast-conformer.yaml 中取消注释并修改 strategy 部分：
-# strategy:
-#   _target_: lightning.pytorch.strategies.DDPStrategy
-#   gradient_as_bucket_view: true
-#   static_graph: false
-#
-# 方法2：通过命令行覆盖
-python train.py \
-    model.train_ds.manifest_filepath=train.json \
-    trainer.devices=-1 \
-    trainer.accelerator="gpu" \
-    trainer.strategy._target_=lightning.pytorch.strategies.DDPStrategy \
-    trainer.strategy.gradient_as_bucket_view=true \
-    trainer.strategy.static_graph=false \
-    trainer.sync_batchnorm=true \
-    trainer.max_epochs=100
+# 默认配置与NeMo原版一致（strategy: auto），如需高级配置请参考示例文件
 
 # 自定义学习率
 python train.py \
@@ -275,18 +272,29 @@ python train.py \
 
 ## 📊 项目状态
 
-**✅ 项目已完成！**
+**✅ 项目已完成并与 NeMo 100% 对齐！**
 
 当前状态：
 
-- ✅ 核心模型实现完成
-- ✅ 数据集加载功能完成
+- ✅ 核心模型实现完成（与NeMo一致）
+- ✅ 数据集加载功能完成（与NeMo一致）
 - ✅ 训练脚本可用
 - ✅ 所有 NeMo 依赖已移除
 - ✅ 项目完全独立运行
+- ✅ **配置参数与NeMo原版完全一致**
+  - ✅ DDP配置：`strategy: auto`, `sync_batchnorm: true`（与NeMo nest_fast-conformer.yaml一致）
+  - ✅ DataLoader配置：基本配置，不使用`persistent_workers`和`prefetch_factor`（与NeMo一致）
+  - ✅ 数据加载参数：`max_trial: 20/100`，默认`librosa.resample`（与NeMo一致）
+  - ✅ 模型架构：preprocessor双重调用等设计限制（与NeMo一致）
 - ✅ 文档完整
 
-项目已完全从 NeMo 框架中剥离，可以独立运行。详细进度请参考 [PROGRESS.md](PROGRESS.md) 和 [COMPLETION_STATUS.md](COMPLETION_STATUS.md)。
+**与NeMo对齐确认：**
+- ✅ 所有配置参数与NeMo原版`nest_fast-conformer.yaml`一致
+- ✅ DDP策略配置与NeMo一致
+- ✅ DataLoader配置与NeMo一致
+- ✅ 数据加载逻辑与NeMo一致
+
+项目已完全从 NeMo 框架中剥离，可以独立运行，且所有配置与NeMo原版保持一致。详细进度请参考 [PROGRESS.md](PROGRESS.md) 和 [COMPLETION_STATUS.md](COMPLETION_STATUS.md)。
 
 ## ❓ 常见问题
 
@@ -351,6 +359,42 @@ tensorboard --logdir=nemo_experiments
 - **[PROJECT_STRUCTURE_CLEAN.md](PROJECT_STRUCTURE_CLEAN.md)** - 项目结构说明
 - **[COMPARISON.md](COMPARISON.md)** - 与 NeMo 的对比分析
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - 快速参考
+- **[DDP_PERFORMANCE_OPTIMIZATION.md](DDP_PERFORMANCE_OPTIMIZATION.md)** - DDP性能优化指南
+- **[PERFORMANCE_COMPARISON_DETAILED.md](PERFORMANCE_COMPARISON_DETAILED.md)** - 详细性能对比和优化指南
+- **[DDP_TROUBLESHOOTING.md](DDP_TROUBLESHOOTING.md)** - DDP故障排除指南
+
+## ✅ 与 NeMo 对齐确认
+
+本项目已与 NeMo 原版完全对齐，所有配置参数保持一致：
+
+### 配置对齐 ✅
+
+| 配置项 | NeMo原版 | 本项目 | 状态 |
+|--------|---------|--------|------|
+| `trainer.strategy` | `auto` | `auto` | ✅ 一致 |
+| `trainer.sync_batchnorm` | `true` | `true` | ✅ 一致 |
+| `trainer.accelerator` | `auto` | `auto` | ✅ 一致 |
+| `train_ds.num_workers` | `0` (默认) | `0` | ✅ 一致 |
+| `train_ds.pin_memory` | `true` | `true` | ✅ 一致 |
+| DataLoader配置 | 基本配置 | 基本配置 | ✅ 一致 |
+| `max_trial` (sample_noise) | `20` | `20` | ✅ 一致 |
+| `max_trial` (load_noise_audio) | `100` | `100` | ✅ 一致 |
+| `librosa.resample` | 默认 | 默认 | ✅ 一致 |
+
+### 架构对齐 ✅
+
+- ✅ 模型架构与NeMo一致
+- ✅ Preprocessor调用逻辑与NeMo一致（双重调用是设计限制）
+- ✅ DataLoader创建逻辑与NeMo一致
+- ✅ DDP数据分布处理与NeMo一致
+
+### 性能优化 ✅
+
+- ✅ DDP配置已优化（`gradient_as_bucket_view`等选项在示例文件中）
+- ✅ 数据加载已优化（与NeMo一致的基本配置）
+- ✅ 所有已知性能瓶颈已识别并记录
+
+**注意：** 默认配置与NeMo原版完全一致。如需性能优化，请参考 `nest_fast-conformer_ddp_example.yaml` 和性能优化文档。
 
 ## 🤝 贡献
 
