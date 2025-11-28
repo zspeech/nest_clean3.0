@@ -927,22 +927,16 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         else:
             collate_fn = None
 
-        # Performance optimizations for DataLoader
-        num_workers = config.get('num_workers', 0)
-        pin_memory = config.get('pin_memory', False)
-        persistent_workers = config.get('persistent_workers', False) if num_workers > 0 else False
-        prefetch_factor = config.get('prefetch_factor', 2) if num_workers > 0 else None
-        
+        # Align with NeMo: use basic DataLoader configuration
+        # Note: persistent_workers and prefetch_factor are not used in NeMo's SSL models
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            persistent_workers=persistent_workers,
-            prefetch_factor=prefetch_factor,
+            num_workers=config.get('num_workers', 0),
+            pin_memory=config.get('pin_memory', False),
         )
 
     @property
