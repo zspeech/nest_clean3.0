@@ -370,35 +370,60 @@ class AudioNoiseDataset(audio_to_text.AudioToCharDataset):
         self.pad_audio_mode = pad_audio_mode
 
     def __getitem__(self, index) -> AudioNoiseItem:
-        sample = self.manifest_processor.collection[index]
-        offset = sample.offset
-
-        if offset is None:
-            offset = 0
-
-        audio = self.featurizer.process(
-            sample.audio_file,
-            offset=offset,
-            duration=sample.duration,
-            trim=self.trim,
-            orig_sr=sample.orig_sr,
-            channel_selector=self.channel_selector,
-        )
-        if audio.size(0) == 0:
-            if is_global_rank_zero():
-                logging.warning(f"Loaded audio has zero length: {sample}.")
-
-        min_len = int(self.min_audio_len_secs * self.featurizer.sample_rate)
-        audio = pad_audio(audio, min_len, self.pad_audio_mode)
-        audio_len = torch.tensor(audio.shape[0]).long()
+        # Debug: Print index to help diagnose batch 71 hanging
+        if index % 100 == 0 or (index >= 560 and index <= 580):  # Batch 71 = ~8 samples/batch * 71 = ~568
+            print(f"[Rank {self.global_rank if hasattr(self, 'global_rank') else 'N/A'}] __getitem__({index}) called", flush=True)
         
-        # Debug: Add error handling for noise loading (prevent hanging)
         try:
-            noise, noise_len = sample_noise(self.noise_data, self.featurizer.sample_rate, audio_len.item())
+            sample = self.manifest_processor.collection[index]
+            offset = sample.offset
+
+            if offset is None:
+                offset = 0
+
+            # Debug: Print before audio loading
+            if index >= 560 and index <= 580:
+                print(f"[Rank {self.global_rank if hasattr(self, 'global_rank') else 'N/A'}] Loading audio from {sample.audio_file}, index={index}", flush=True)
+            
+            audio = self.featurizer.process(
+                sample.audio_file,
+                offset=offset,
+                duration=sample.duration,
+                trim=self.trim,
+                orig_sr=sample.orig_sr,
+                channel_selector=self.channel_selector,
+            )
+            
+            # Debug: Print after audio loading
+            if index >= 560 and index <= 580:
+                print(f"[Rank {self.global_rank if hasattr(self, 'global_rank') else 'N/A'}] Audio loaded, shape={audio.shape}, index={index}", flush=True)
+            
+            if audio.size(0) == 0:
+                if is_global_rank_zero():
+                    logging.warning(f"Loaded audio has zero length: {sample}.")
+
+            min_len = int(self.min_audio_len_secs * self.featurizer.sample_rate)
+            audio = pad_audio(audio, min_len, self.pad_audio_mode)
+            audio_len = torch.tensor(audio.shape[0]).long()
+            
+            # Debug: Add error handling for noise loading (prevent hanging)
+            try:
+                noise, noise_len = sample_noise(self.noise_data, self.featurizer.sample_rate, audio_len.item())
+            except Exception as e:
+                # If noise loading fails completely, use zero noise as fallback
+                logging.error(f"Failed to load noise in __getitem__({index}): {e}, using zero noise")
+                noise = torch.zeros(audio_len.item()).float()
+                noise_len = audio_len.clone()
         except Exception as e:
-            # If noise loading fails completely, use zero noise as fallback
-            logging.error(f"Failed to load noise in __getitem__({index}): {e}, using zero noise")
-            noise = torch.zeros(audio_len.item()).float()
+            # CRITICAL: Catch all exceptions to prevent hanging
+            error_msg = f"Error in __getitem__({index}): {e}"
+            logging.error(error_msg)
+            print(f"[Rank {self.global_rank if hasattr(self, 'global_rank') else 'N/A'}] {error_msg}", flush=True)
+            # Return a dummy item to prevent hanging
+            dummy_len = int(self.min_audio_len_secs * self.featurizer.sample_rate)
+            audio = torch.zeros(dummy_len).float()
+            audio_len = torch.tensor(dummy_len).long()
+            noise = torch.zeros(dummy_len).float()
             noise_len = audio_len.clone()
 
         item = AudioNoiseItem(
