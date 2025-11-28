@@ -1108,6 +1108,14 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         return log_probs, encoded_len, masks, tokens
 
     def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
+        # Debug: Print batch info to help diagnose hanging issues
+        if batch_idx % 10 == 0 or batch_idx == 71:  # Print every 10 batches and specifically at batch 71
+            print(f"[Rank {self.global_rank}] Training step {batch_idx}, "
+                  f"batch size: {batch.audio.size(0)}, "
+                  f"audio shape: {batch.audio.shape}, "
+                  f"noise shape: {batch.noise.shape}, "
+                  f"device: {batch.audio.device}", flush=True)
+        
         log_probs, encoded_len, masks, tokens = self.forward(
             input_signal=batch.audio,
             input_signal_length=batch.audio_len,
@@ -1119,6 +1127,10 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         )
 
         loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
+        
+        # Debug: Print after forward pass
+        if batch_idx == 71:
+            print(f"[Rank {self.global_rank}] Batch 71 forward pass completed, loss: {loss_value.item():.4f}", flush=True)
 
         # Optimize logging: use dictionary for batch logging (more efficient than multiple self.log() calls)
         # This matches NeMo's approach and reduces overhead
