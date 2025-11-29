@@ -1190,6 +1190,14 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         return log_probs, encoded_len, masks, tokens
 
     def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
+        # CRITICAL: Log at the very beginning of training_step to catch hanging issues
+        # Log EVERY batch for first 100 batches, then every 10 batches
+        if batch_idx < 100 or batch_idx % 10 == 0:
+            logging.info(
+                f"[TRAINING_STEP START] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                f"world_size={self.world_size}, device={self.device}"
+            )
+        
         # CRITICAL: Skip batch if we've exceeded the expected number of batches per rank
         # This prevents hanging when different ranks have different batch counts
         if self.world_size > 1 and self._trainer is not None:
@@ -1234,6 +1242,13 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                     # Return dummy loss dict instead of None to prevent PyTorch Lightning errors
                     return {'loss': torch.tensor(0.0, device=self.device), 'log': {}}
         
+        # Log before forward pass to catch hanging in forward
+        if batch_idx % 10 == 0 or batch_idx < 10:
+            logging.info(
+                f"[BEFORE FORWARD] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                f"batch.audio.shape={batch.audio.shape if hasattr(batch, 'audio') else 'N/A'}"
+            )
+        
         log_probs, encoded_len, masks, tokens = self.forward(
             input_signal=batch.audio,
             input_signal_length=batch.audio_len,
@@ -1244,7 +1259,22 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             apply_mask=True,
         )
 
+        # Log before loss calculation
+        if batch_idx < 100 or batch_idx % 10 == 0:
+            logging.info(
+                f"[BEFORE LOSS] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                f"log_probs.shape={log_probs.shape if log_probs is not None else 'N/A'}, "
+                f"tokens.shape={tokens.shape if tokens is not None else 'N/A'}"
+            )
+        
         loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
+        
+        # Log after loss calculation
+        if batch_idx < 100 or batch_idx % 10 == 0:
+            logging.info(
+                f"[AFTER LOSS] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                f"loss_value={loss_value.item() if hasattr(loss_value, 'item') else loss_value}"
+            )
 
         # Align with NeMo original: return dict format for compatibility
         tensorboard_logs = {
@@ -1253,7 +1283,16 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             'train_loss': loss_value,
         }
 
-        return {'loss': loss_value, 'log': tensorboard_logs}
+        result = {'loss': loss_value, 'log': tensorboard_logs}
+        
+        # Log at the end of training_step
+        if batch_idx < 100 or batch_idx % 10 == 0:
+            logging.info(
+                f"[TRAINING_STEP END] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                f"loss={loss_value.item() if hasattr(loss_value, 'item') else loss_value}"
+            )
+        
+        return result
 
     def inference_pass(
         self,
