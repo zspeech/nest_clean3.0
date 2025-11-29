@@ -1121,6 +1121,20 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         processed_noisy_input_signal_length=None,
         apply_mask=False,
     ):
+        # CRITICAL: Add logging at the start of forward to catch hanging
+        # Note: We can't use batch_idx here, so we'll use a simple counter or device info
+        if hasattr(self, '_forward_call_count'):
+            self._forward_call_count += 1
+        else:
+            self._forward_call_count = 1
+        
+        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+            logging.info(
+                f"[FORWARD START] Rank {self.global_rank}: call_count={self._forward_call_count}, "
+                f"has_input={input_signal is not None}, has_processed={processed_signal is not None}, "
+                f"apply_mask={apply_mask}"
+            )
+        
         has_input_signal = input_signal is not None and input_signal_length is not None
         has_processed_signal = processed_signal is not None and processed_signal_length is not None
         if (has_input_signal ^ has_processed_signal) == False:
@@ -1128,11 +1142,25 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 f"{self} Arguments ``input_signal`` and ``input_signal_length`` are mutually exclusive "
                 " with ``processed_signal`` and ``processed_signal_len`` arguments."
             )
+        
+        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+            logging.info(f"[FORWARD] Rank {self.global_rank}: Before preprocessor, has_processed={has_processed_signal}")
+        
         if not has_processed_signal:
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(
+                    f"[FORWARD] Rank {self.global_rank}: Calling preprocessor, "
+                    f"input_signal.shape={input_signal.shape if input_signal is not None else 'N/A'}"
+                )
             processed_signal, processed_signal_length = self.preprocessor(
                 input_signal=input_signal,
                 length=input_signal_length,
             )
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(
+                    f"[FORWARD] Rank {self.global_rank}: After preprocessor, "
+                    f"processed_signal.shape={processed_signal.shape if processed_signal is not None else 'N/A'}"
+                )
 
         ### Following code snipet is not used but kept for future reference
         #
@@ -1159,33 +1187,74 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_noisy_input_signal`` and ``processed_noisy_input_signal_len`` arguments."
             )
         if not has_processed_noisy_input_signal:
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(
+                    f"[FORWARD] Rank {self.global_rank}: Calling preprocessor for noisy_input, "
+                    f"noisy_input_signal.shape={noisy_input_signal.shape if noisy_input_signal is not None else 'N/A'}"
+                )
             processed_noisy_input_signal, processed_noisy_input_signal_length = self.preprocessor(
                 input_signal=noisy_input_signal,
                 length=noisy_input_signal_length,
             )
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(
+                    f"[FORWARD] Rank {self.global_rank}: After noisy preprocessor, "
+                    f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape if processed_noisy_input_signal is not None else 'N/A'}"
+                )
+
+        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+            logging.info(
+                f"[FORWARD] Rank {self.global_rank}: Checking pre_encoder, "
+                f"pre_encoder={self.pre_encoder is not None}"
+            )
 
         if self.pre_encoder is not None:
             # mask after convolutional sub-sampling
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(f"[FORWARD] Rank {self.global_rank}: Calling pre_encoder.pre_encode...")
             feats, _ = self.pre_encoder.pre_encode(x=processed_signal, lengths=processed_signal_length)
+            
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(f"[FORWARD] Rank {self.global_rank}: Calling quantizer...")
             _, tokens = self.quantizer(input_signal=feats.transpose(1, 2))
 
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(f"[FORWARD] Rank {self.global_rank}: Setting masking enabled={apply_mask}")
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
+            
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(f"[FORWARD] Rank {self.global_rank}: Calling encoder...")
             encoded, encoded_len = self.encoder(
                 audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
             )
             masks = self.pre_encoder.get_current_mask()
         else:
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(f"[FORWARD] Rank {self.global_rank}: No pre_encoder, calling quantizer...")
             _, tokens = self.quantizer(input_signal=processed_signal)
             if apply_mask:
+                if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                    logging.info(f"[FORWARD] Rank {self.global_rank}: Applying mask...")
                 masked_signal, masks = self.mask_processor(
                     input_feats=processed_noisy_input_signal, input_lengths=processed_noisy_input_signal_length
                 )
             else:
                 masked_signal = processed_noisy_input_signal
                 masks = torch.zeros_like(processed_noisy_input_signal)
+            
+            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+                logging.info(f"[FORWARD] Rank {self.global_rank}: Calling encoder...")
             encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
 
+        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+            logging.info(f"[FORWARD] Rank {self.global_rank}: Calling decoder...")
         log_probs = self.decoder(encoder_output=encoded)
+
+        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
+            logging.info(
+                f"[FORWARD END] Rank {self.global_rank}: call_count={self._forward_call_count}, "
+                f"log_probs.shape={log_probs.shape if log_probs is not None else 'N/A'}"
+            )
 
         return log_probs, encoded_len, masks, tokens
 
