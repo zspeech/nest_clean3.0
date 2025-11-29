@@ -229,7 +229,11 @@ def load_noise_audio(
         )
         WhiteNoisePerturbation(min_level=min_white_noise_db, max_level=max_white_noise_db).perturb(audio_segment)
 
-    noise = torch.tensor(audio_segment.samples, dtype=torch.float)
+    # Convert to tensor: if already a tensor, use clone().detach() to avoid warning
+    if isinstance(audio_segment.samples, torch.Tensor):
+        noise = audio_segment.samples.clone().detach().float()
+    else:
+        noise = torch.tensor(audio_segment.samples, dtype=torch.float)
     noise_len = torch.tensor(noise.size(0)).long()
     # pad to max_audio_len if necessary
     if max_audio_len is not None and pad_to_max:
