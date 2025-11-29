@@ -1200,16 +1200,52 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         
         # CRITICAL: Skip batch if we've exceeded the expected number of batches per rank
         # This prevents hanging when different ranks have different batch counts
+        if batch_idx < 100 or batch_idx % 10 == 0:
+            logging.info(
+                f"[CHECK DDP SYNC] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                f"world_size={self.world_size}, trainer={self._trainer is not None}"
+            )
+        
         if self.world_size > 1 and self._trainer is not None:
+            if batch_idx < 100 or batch_idx % 10 == 0:
+                logging.info(
+                    f"[CALC BATCHES] Rank {self.global_rank}: batch_idx={batch_idx}, "
+                    f"has_dataset={hasattr(self._train_dl, 'dataset')}"
+                )
+            
             # Calculate expected batches per rank
             if hasattr(self._train_dl, 'dataset'):
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Importing ConcatDataset...")
+                
                 from common.data.dataset import ConcatDataset
-                dataset_len = len(self._train_dl.dataset)
+                
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Calling len(dataset)...")
+                
+                try:
+                    dataset_len = len(self._train_dl.dataset)
+                    if batch_idx < 100 or batch_idx % 10 == 0:
+                        logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Got dataset_len={dataset_len}")
+                except Exception as e:
+                    logging.error(f"[CALC BATCHES] Rank {self.global_rank}: Error getting dataset_len: {e}")
+                    raise
+                
                 batch_size = self._train_dl.batch_size
                 drop_last_actual = getattr(self._train_dl, 'drop_last', False)
+                
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Checking dataset types...")
+                
                 is_concat_dataset = isinstance(self._train_dl.dataset, ConcatDataset)
                 is_iterable_dataset = isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
                 is_tarred_like = is_iterable_dataset and not is_concat_dataset
+                
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(
+                        f"[CALC BATCHES] Rank {self.global_rank}: dataset_len={dataset_len}, "
+                        f"batch_size={batch_size}, is_concat={is_concat_dataset}, is_tarred={is_tarred_like}"
+                    )
                 
                 # Calculate expected batches per rank based on dataset type
                 # ConcatDataset and TarredDataset: dataset_len is already per-rank
