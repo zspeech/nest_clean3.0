@@ -783,6 +783,7 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
 
         return {'loss': loss_value, 'log': tensorboard_logs}
 
+    @torch.no_grad()
     def inference_pass(self, batch, batch_idx=0, dataloader_idx=0, mode='val', apply_mask=False):
         input_signal, input_signal_length = batch[0], batch[1]
         # Simplified: DALI support removed
@@ -1080,6 +1081,7 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
 
         return {'loss': loss_value, 'log': tensorboard_logs}
 
+    @torch.no_grad()
     def inference_pass(
         self,
         batch: ssl_dataset.AudioNoiseBatch,
