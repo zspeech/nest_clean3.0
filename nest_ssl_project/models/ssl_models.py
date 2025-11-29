@@ -263,68 +263,27 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
 
         self._train_dl = self._setup_dataloader_from_config(config=train_data_config)
 
-        # CRITICAL: Ensure all ranks process the same number of batches for DDP synchronization
-        # Calculate expected number of batches per rank
-        if self._train_dl is not None and hasattr(self._train_dl, 'dataset'):
-            dataset_len = len(self._train_dl.dataset)
-            batch_size = train_data_config['batch_size']
-            
-            # CRITICAL: Handle dataset length calculation based on dataset type
-            # Dataset types and their per-rank behavior:
-            # 1. Regular Dataset: All ranks see SAME dataset, DistributedSampler handles splitting
-            # 2. ConcatDataset: Each rank sees DIFFERENT dataset (already split by ConcatDataset)
-            # 3. TarredDataset (IterableDataset): Each rank sees DIFFERENT shards
-            from common.data.dataset import ConcatDataset
-            is_concat_dataset = isinstance(self._train_dl.dataset, ConcatDataset)
-            is_iterable_dataset = isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
-            is_tarred_like = is_iterable_dataset and not is_concat_dataset  # TarredDataset is IterableDataset but not ConcatDataset
-            
-            if self.world_size > 1 and torch.distributed.is_initialized():
-                # Check dataset length consistency for regular datasets
-                if not (is_concat_dataset or is_tarred_like):
-                    # For regular datasets, all ranks should have the same length
-                    dataset_len_tensor = torch.tensor(dataset_len, dtype=torch.long, device='cuda' if torch.cuda.is_available() else 'cpu')
-                    torch.distributed.all_reduce(dataset_len_tensor, op=torch.distributed.ReduceOp.MAX)
-                    max_dataset_len = dataset_len_tensor.item()
-                    if dataset_len != max_dataset_len:
-                        logging.error(
-                            f"Rank {self.global_rank} has dataset_len={dataset_len}, but max across ranks={max_dataset_len}. "
-                            "This will cause DDP synchronization issues! All ranks must see the same dataset."
-                        )
-            
-            # Calculate batches_per_rank based on dataset type
-            if is_concat_dataset or is_tarred_like:
-                batches_per_rank = dataset_len // batch_size
-            else:
-                batches_per_rank = (dataset_len // self.world_size) // batch_size
-            
-            # Ensure limit_train_batches is set correctly for DDP
-            if self.world_size > 1 and self._trainer is not None:
-                if isinstance(self._trainer.limit_train_batches, float):
-                    self._trainer.limit_train_batches = int(
-                        self._trainer.limit_train_batches * batches_per_rank
-                    )
-                elif isinstance(self._trainer.limit_train_batches, int):
-                    if self._trainer.limit_train_batches > batches_per_rank:
-                        self._trainer.limit_train_batches = batches_per_rank
-                elif self._trainer is None:
-                    logging.warning(
-                        "Model Trainer was not set before constructing the dataset, incorrect number of "
-                        "training batches will be used. Please set the trainer and rebuild the dataset."
-                    )
-            
-            # Need to set this because if using an IterableDataset, the length of the dataloader is the total number
-            # of samples rather than the number of batches, and this messes up the tqdm progress bar.
-            # So we set the number of steps manually (to the correct number) to fix this.
-            if isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset):
-                # We also need to check if limit_train_batches is already set.
-                # If it's an int, we assume that the user has set it to something sane, i.e. <= # training batches,
-                # and don't change it. Otherwise, adjust batches accordingly if it's a float (including 1.0).
-                if self._trainer is not None and isinstance(self._trainer.limit_train_batches, float):
-                    self._trainer.limit_train_batches = int(
-                        self._trainer.limit_train_batches
-                        * ceil((len(self._train_dl.dataset) / self.world_size) / train_data_config['batch_size'])
-                    )
+        # Need to set this because if using an IterableDataset, the length of the dataloader is the total number
+        # of samples rather than the number of batches, and this messes up the tqdm progress bar.
+        # So we set the number of steps manually (to the correct number) to fix this.
+        if (
+            self._train_dl is not None
+            and hasattr(self._train_dl, 'dataset')
+            and isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
+        ):
+            # We also need to check if limit_train_batches is already set.
+            # If it's an int, we assume that the user has set it to something sane, i.e. <= # training batches,
+            # and don't change it. Otherwise, adjust batches accordingly if it's a float (including 1.0).
+            if self._trainer is not None and isinstance(self._trainer.limit_train_batches, float):
+                self._trainer.limit_train_batches = int(
+                    self._trainer.limit_train_batches
+                    * ceil((len(self._train_dl.dataset) / self.world_size) / train_data_config['batch_size'])
+                )
+            elif self._trainer is None:
+                logging.warning(
+                    "Model Trainer was not set before constructing the dataset, incorrect number of "
+                    "training batches will be used. Please set the trainer and rebuild the dataset."
+                )
 
     def setup_validation_data(self, val_data_config: Optional[Union[DictConfig, Dict]]):
         """
@@ -875,13 +834,13 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
             return
 
         val_loss_mean = torch.stack(loss_list).mean()
-        # Use self.log() for PyTorch Lightning 2.x compatibility
-        self.log('val_loss', val_loss_mean, on_step=False, on_epoch=True, sync_dist=True)
+        tensorboard_logs = {'val_loss': val_loss_mean}
+        return {'val_loss': val_loss_mean, 'log': tensorboard_logs}
 
     def multi_test_epoch_end(self, outputs, dataloader_idx: int = 0):
         test_loss_mean = torch.stack([x['test_loss'] for x in outputs]).mean()
-        # Use self.log() for PyTorch Lightning 2.x compatibility
-        self.log('test_loss', test_loss_mean, on_step=False, on_epoch=True, sync_dist=True)
+        tensorboard_logs = {'test_loss': test_loss_mean}
+        return {'test_loss': test_loss_mean, 'log': tensorboard_logs}
 
 
 class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
@@ -953,17 +912,11 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         if num_workers == 0:
             pin_memory = False
         
-        # Force drop_last=True for DDP training to prevent hanging
-        drop_last = config.get('drop_last', False)
-        if self.world_size > 1:
-            # In DDP mode, always drop last batch to ensure all ranks process same number of batches
-            drop_last = True
-        
         dataloader = torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
-            drop_last=drop_last,
+            drop_last=config.get('drop_last', False),
             shuffle=shuffle,
             num_workers=num_workers,
             pin_memory=pin_memory,
@@ -1104,35 +1057,6 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         return log_probs, encoded_len, masks, tokens
 
     def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
-        # Skip batch if we've exceeded the expected number of batches per rank
-        # This prevents hanging when different ranks have different batch counts
-        if self.world_size > 1 and self._trainer is not None:
-            # Calculate expected batches per rank
-            if hasattr(self._train_dl, 'dataset'):
-                from common.data.dataset import ConcatDataset
-                
-                try:
-                    dataset_len = len(self._train_dl.dataset)
-                except Exception as e:
-                    logging.error(f"Error getting dataset_len: {e}")
-                    raise
-                
-                batch_size = self._train_dl.batch_size
-                is_concat_dataset = isinstance(self._train_dl.dataset, ConcatDataset)
-                is_iterable_dataset = isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
-                is_tarred_like = is_iterable_dataset and not is_concat_dataset
-                
-                # Calculate expected batches per rank based on dataset type
-                if is_concat_dataset or is_tarred_like:
-                    expected_batches_per_rank = dataset_len // batch_size
-                else:
-                    expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
-                
-                # Skip if batch_idx exceeds expected batches (safety check)
-                if batch_idx >= expected_batches_per_rank:
-                    # Return dummy loss dict instead of None to prevent PyTorch Lightning errors
-                    return {'loss': torch.tensor(0.0, device=self.device), 'log': {}}
-        
         log_probs, encoded_len, masks, tokens = self.forward(
             input_signal=batch.audio,
             input_signal_length=batch.audio_len,
