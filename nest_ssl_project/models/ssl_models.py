@@ -1112,9 +1112,10 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             return {}
         
         # Case where we provide exactly 1 data loader
-        if isinstance(self.validation_step_outputs, list):
-            if len(self.validation_step_outputs) > 0:
-                # Single dataloader case
+        # Check if first element is a dict (single dataloader: list of dicts)
+        if isinstance(self.validation_step_outputs, list) and len(self.validation_step_outputs) > 0:
+            if isinstance(self.validation_step_outputs[0], dict):
+                # Single dataloader case: list of dicts
                 output_dict = self.multi_validation_epoch_end(self.validation_step_outputs, dataloader_idx=0)
                 
                 if output_dict is not None and 'log' in output_dict:
@@ -1122,38 +1123,39 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 
                 self.validation_step_outputs.clear()  # free memory
                 return output_dict
-        elif isinstance(self.validation_step_outputs, dict):
-            # Multiple dataloaders case
-            output_dict = {'log': {}}
-            
-            for dataloader_idx, outputs in self.validation_step_outputs.items():
-                if len(outputs) > 0:
-                    dataloader_logs = self.multi_validation_epoch_end(outputs, dataloader_idx=dataloader_idx)
-                    
-                    # If result was not provided, generate empty dict
-                    dataloader_logs = dataloader_logs or {}
-                    
-                    # Perform `val_loss` resolution first (if provided outside logs)
-                    if 'val_loss' in dataloader_logs:
-                        if 'val_loss' not in output_dict:
-                            output_dict['val_loss'] = dataloader_logs['val_loss']
-                    
-                    # For every item in the result dictionary
-                    for k, v in dataloader_logs.items():
-                        if k == 'log':
-                            # Merge logs
-                            if isinstance(v, dict):
-                                output_dict['log'].update(v)
-                        else:
-                            # Store other values
-                            output_dict[k] = v
-                    
-                    self.validation_step_outputs[dataloader_idx].clear()  # free memory
-            
-            if 'log' in output_dict:
-                self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
-            
-            return output_dict
+            else:
+                # Multiple dataloaders case: list of lists of dicts
+                output_dict = {'log': {}}
+                
+                # The output is a list of list of dicts, outer list corresponds to dataloader idx
+                for dataloader_idx, val_outputs in enumerate(self.validation_step_outputs):
+                    if len(val_outputs) > 0:
+                        dataloader_logs = self.multi_validation_epoch_end(val_outputs, dataloader_idx=dataloader_idx)
+                        
+                        # If result was not provided, generate empty dict
+                        dataloader_logs = dataloader_logs or {}
+                        
+                        # Perform `val_loss` resolution first (if provided outside logs)
+                        if 'val_loss' in dataloader_logs:
+                            if 'val_loss' not in output_dict:
+                                output_dict['val_loss'] = dataloader_logs['val_loss']
+                        
+                        # For every item in the result dictionary
+                        for k, v in dataloader_logs.items():
+                            if k == 'log':
+                                # Merge logs
+                                if isinstance(v, dict):
+                                    output_dict['log'].update(v)
+                            else:
+                                # Store other values
+                                output_dict[k] = v
+                        
+                        self.validation_step_outputs[dataloader_idx].clear()  # free memory
+                
+                if 'log' in output_dict:
+                    self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
+                
+                return output_dict
         
         return {}
 
@@ -1167,9 +1169,10 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             return {}
         
         # Case where we provide exactly 1 data loader
-        if isinstance(self.test_step_outputs, list):
-            if len(self.test_step_outputs) > 0:
-                # Single dataloader case
+        # Check if first element is a dict (single dataloader: list of dicts)
+        if isinstance(self.test_step_outputs, list) and len(self.test_step_outputs) > 0:
+            if isinstance(self.test_step_outputs[0], dict):
+                # Single dataloader case: list of dicts
                 output_dict = self.multi_test_epoch_end(self.test_step_outputs, dataloader_idx=0)
                 
                 if output_dict is not None and 'log' in output_dict:
@@ -1177,37 +1180,38 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 
                 self.test_step_outputs.clear()  # free memory
                 return output_dict
-        elif isinstance(self.test_step_outputs, dict):
-            # Multiple dataloaders case
-            output_dict = {'log': {}}
-            
-            for dataloader_idx, outputs in self.test_step_outputs.items():
-                if len(outputs) > 0:
-                    dataloader_logs = self.multi_test_epoch_end(outputs, dataloader_idx=dataloader_idx)
-                    
-                    # If result was not provided, generate empty dict
-                    dataloader_logs = dataloader_logs or {}
-                    
-                    # Perform `test_loss` resolution first (if provided outside logs)
-                    if 'test_loss' in dataloader_logs:
-                        if 'test_loss' not in output_dict:
-                            output_dict['test_loss'] = dataloader_logs['test_loss']
-                    
-                    # For every item in the result dictionary
-                    for k, v in dataloader_logs.items():
-                        if k == 'log':
-                            # Merge logs
-                            if isinstance(v, dict):
-                                output_dict['log'].update(v)
-                        else:
-                            # Store other values
-                            output_dict[k] = v
-                    
-                    self.test_step_outputs[dataloader_idx].clear()  # free memory
-            
-            if 'log' in output_dict:
-                self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=True)
-            
-            return output_dict
+            else:
+                # Multiple dataloaders case: list of lists of dicts
+                output_dict = {'log': {}}
+                
+                # The output is a list of list of dicts, outer list corresponds to dataloader idx
+                for dataloader_idx, test_outputs in enumerate(self.test_step_outputs):
+                    if len(test_outputs) > 0:
+                        dataloader_logs = self.multi_test_epoch_end(test_outputs, dataloader_idx=dataloader_idx)
+                        
+                        # If result was not provided, generate empty dict
+                        dataloader_logs = dataloader_logs or {}
+                        
+                        # Perform `test_loss` resolution first (if provided outside logs)
+                        if 'test_loss' in dataloader_logs:
+                            if 'test_loss' not in output_dict:
+                                output_dict['test_loss'] = dataloader_logs['test_loss']
+                        
+                        # For every item in the result dictionary
+                        for k, v in dataloader_logs.items():
+                            if k == 'log':
+                                # Merge logs
+                                if isinstance(v, dict):
+                                    output_dict['log'].update(v)
+                            else:
+                                # Store other values
+                                output_dict[k] = v
+                        
+                        self.test_step_outputs[dataloader_idx].clear()  # free memory
+                
+                if 'log' in output_dict:
+                    self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=True)
+                
+                return output_dict
         
         return {}
