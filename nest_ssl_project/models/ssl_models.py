@@ -747,7 +747,17 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
         # When sync_max_audio_length=True, encoder performs all_reduce which can cause deadlock
         # if ranks are not synchronized (e.g., different batch sizes, early stopping, etc.)
         if hasattr(self.encoder, 'sync_max_audio_length'):
+            original_sync_max = self.encoder.sync_max_audio_length
             self.encoder.sync_max_audio_length = False
+            logging.info(
+                f"Rank {self.global_rank}: Set encoder.sync_max_audio_length from {original_sync_max} to False "
+                f"to prevent DDP deadlock (world_size={self.world_size})"
+            )
+        else:
+            logging.warning(
+                f"Rank {self.global_rank}: encoder does not have sync_max_audio_length attribute, "
+                "cannot disable DDP synchronization"
+            )
         self.decoder = self.from_config_dict(self.cfg.decoder)
         self.loss = self.from_config_dict(self.cfg.loss)
 
@@ -1222,14 +1232,19 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 logging.info(f"[FORWARD] Rank {self.global_rank}: Setting masking enabled={apply_mask}")
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
             
+            # CRITICAL: Always log sync_max_audio_length before encoder call to debug hanging
+            sync_max = getattr(self.encoder, 'sync_max_audio_length', 'NOT_SET')
             if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                # CRITICAL: Check sync_max_audio_length before encoder call
-                sync_max = getattr(self.encoder, 'sync_max_audio_length', 'NOT_SET')
                 logging.info(
                     f"[FORWARD] Rank {self.global_rank}: Calling encoder (pre_encoder path), "
                     f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape}, "
                     f"length.shape={processed_noisy_input_signal_length.shape if processed_noisy_input_signal_length is not None else 'N/A'}, "
                     f"encoder.sync_max_audio_length={sync_max}"
+                )
+            elif sync_max is True:  # CRITICAL: Always log if sync_max_audio_length is True (potential deadlock)
+                logging.error(
+                    f"[FORWARD] Rank {self.global_rank}: CRITICAL - encoder.sync_max_audio_length={sync_max} "
+                    f"may cause DDP deadlock! (call_count={self._forward_call_count})"
                 )
             try:
                 encoded, encoded_len = self.encoder(
@@ -1259,14 +1274,19 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 masked_signal = processed_noisy_input_signal
                 masks = torch.zeros_like(processed_noisy_input_signal)
             
+            # CRITICAL: Always log sync_max_audio_length before encoder call to debug hanging
+            sync_max = getattr(self.encoder, 'sync_max_audio_length', 'NOT_SET')
             if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                # CRITICAL: Check sync_max_audio_length before encoder call
-                sync_max = getattr(self.encoder, 'sync_max_audio_length', 'NOT_SET')
                 logging.info(
                     f"[FORWARD] Rank {self.global_rank}: Calling encoder, "
                     f"masked_signal.shape={masked_signal.shape}, "
                     f"length.shape={processed_noisy_input_signal_length.shape if processed_noisy_input_signal_length is not None else 'N/A'}, "
                     f"encoder.sync_max_audio_length={sync_max}"
+                )
+            elif sync_max is True:  # CRITICAL: Always log if sync_max_audio_length is True (potential deadlock)
+                logging.error(
+                    f"[FORWARD] Rank {self.global_rank}: CRITICAL - encoder.sync_max_audio_length={sync_max} "
+                    f"may cause DDP deadlock! (call_count={self._forward_call_count})"
                 )
             try:
                 encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
