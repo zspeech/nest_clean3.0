@@ -493,6 +493,7 @@ class ConformerEncoder(NeuralModule, AccessMixin):
         stochastic_depth_drop_prob: float = 0.0,
         stochastic_depth_mode: str = "linear",
         stochastic_depth_start_layer: int = 1,
+        sync_max_audio_length: bool = True,
         **kwargs
     ):
         super().__init__()
@@ -504,6 +505,8 @@ class ConformerEncoder(NeuralModule, AccessMixin):
         self.subsampling_factor = subsampling_factor
         self.self_attention_model = self_attention_model
         d_ff = d_model * ff_expansion_factor
+        self.sync_max_audio_length = sync_max_audio_length
+        self.max_audio_length = 0
         
         # X-scaling
         if xscaling:
@@ -614,6 +617,9 @@ class ConformerEncoder(NeuralModule, AccessMixin):
             encoded: Encoded features of shape [B, D', T']
             encoded_len: Updated lengths of shape [B]
         """
+        # Synchronize / update maximum sequence length (matches NeMo)
+        self.update_max_seq_length(seq_length=audio_signal.size(-1), device=audio_signal.device)
+        
         # Pre-encode (subsampling)
         x, lengths = self.pre_encode(audio_signal, length)
         
@@ -640,3 +646,28 @@ class ConformerEncoder(NeuralModule, AccessMixin):
         x = x.transpose(1, 2)
         
         return x, lengths
+
+    def update_max_seq_length(self, seq_length: int, device: torch.device):
+        """
+        Match NeMo behavior: optionally synchronize maximum sequence length across ranks.
+        """
+        if (
+            self.sync_max_audio_length
+            and torch.distributed.is_available()
+            and torch.distributed.is_initialized()
+        ):
+            global_max_len = torch.tensor([seq_length], dtype=torch.float32, device=device)
+            torch.distributed.all_reduce(global_max_len, op=torch.distributed.ReduceOp.MAX)
+            seq_length = int(global_max_len.item())
+        
+        if seq_length > self.max_audio_length:
+            self.set_max_audio_length(seq_length)
+    
+    def set_max_audio_length(self, max_audio_length: int):
+        """Extend positional encodings when sequence length increases."""
+        self.max_audio_length = max_audio_length
+        if getattr(self, "pos_enc", None) is not None:
+            param = next(self.parameters())
+            device = param.device
+            dtype = param.dtype
+            self.pos_enc.extend_pe(max_audio_length, device, dtype)
