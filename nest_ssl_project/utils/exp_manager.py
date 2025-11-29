@@ -96,31 +96,9 @@ def exp_manager(trainer: pl.Trainer, exp_cfg: Optional[DictConfig] = None):
             mode=mode,
             save_top_k=save_top_k,
             save_last=True,
-            verbose=verbose,
+            verbose=verbose,  # Lightning's ModelCheckpoint already prints checkpoint info via rank_zero_info
         )
         trainer.callbacks.append(checkpoint_callback)
-        
-        # Add callback to log checkpoint save events (aligned with NeMo)
-        # Only log from rank 0 to avoid duplicate output in DDP
-        from utils.logging import is_global_rank_zero
-        
-        class CheckpointLoggingCallback(Callback):
-            def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-                # Only log from rank 0 (aligned with NeMo)
-                if not is_global_rank_zero():
-                    return
-                    
-                if hasattr(trainer, 'checkpoint_callback') and trainer.checkpoint_callback is not None:
-                    cb = trainer.checkpoint_callback
-                    if hasattr(cb, 'best_model_path') and cb.best_model_path:
-                        best_score = getattr(cb, 'best_model_score', None)
-                        if best_score is not None:
-                            logger.info(
-                                f"Best {monitor} checkpoint saved: {cb.best_model_path} "
-                                f"(score: {best_score:.4f})"
-                            )
-        
-        trainer.callbacks.append(CheckpointLoggingCallback())
     
     logger.info(f"Experiment directory: {exp_path}")
 
