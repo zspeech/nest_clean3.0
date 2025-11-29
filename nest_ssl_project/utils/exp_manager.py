@@ -80,13 +80,14 @@ def exp_manager(trainer: pl.Trainer, exp_cfg: Optional[DictConfig] = None):
     
     # Setup checkpoint callback
     if exp_cfg.get('create_checkpoint_callback', True):
-        from lightning.pytorch.callbacks import ModelCheckpoint
+        from lightning.pytorch.callbacks import ModelCheckpoint, Callback
         
         checkpoint_params = exp_cfg.get('checkpoint_callback_params', {})
         monitor = checkpoint_params.get('monitor', 'val_loss')
         mode = checkpoint_params.get('mode', 'min')
         save_top_k = checkpoint_params.get('save_top_k', 1)
         filename = checkpoint_params.get('filename', '{epoch}-{step}')
+        verbose = checkpoint_params.get('verbose', True)
         
         checkpoint_callback = ModelCheckpoint(
             dirpath=str(exp_path / 'checkpoints'),
@@ -95,8 +96,24 @@ def exp_manager(trainer: pl.Trainer, exp_cfg: Optional[DictConfig] = None):
             mode=mode,
             save_top_k=save_top_k,
             save_last=True,
+            verbose=verbose,
         )
         trainer.callbacks.append(checkpoint_callback)
+        
+        # Add callback to log checkpoint save events (aligned with NeMo)
+        class CheckpointLoggingCallback(Callback):
+            def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+                if hasattr(trainer, 'checkpoint_callback') and trainer.checkpoint_callback is not None:
+                    cb = trainer.checkpoint_callback
+                    if hasattr(cb, 'best_model_path') and cb.best_model_path:
+                        best_score = getattr(cb, 'best_model_score', None)
+                        if best_score is not None:
+                            logger.info(
+                                f"Best {monitor} checkpoint saved: {cb.best_model_path} "
+                                f"(score: {best_score:.4f})"
+                            )
+        
+        trainer.callbacks.append(CheckpointLoggingCallback())
     
     logger.info(f"Experiment directory: {exp_path}")
 
