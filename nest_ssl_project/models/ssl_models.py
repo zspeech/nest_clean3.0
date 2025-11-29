@@ -1322,7 +1322,8 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                     )
         
         # Log before forward pass to catch hanging in forward
-        if batch_idx % 10 == 0 or batch_idx < 10:
+        # CRITICAL: Use same condition as other logs (first 100 batches or every 10)
+        if batch_idx < 100 or batch_idx % 10 == 0:
             logging.info(
                 f"[BEFORE FORWARD] Rank {self.global_rank}: batch_idx={batch_idx}, "
                 f"batch.audio.shape={batch.audio.shape if hasattr(batch, 'audio') else 'N/A'}"
