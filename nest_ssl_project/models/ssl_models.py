@@ -1033,7 +1033,7 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             pin_memory=pin_memory,
         )
         
-        # Verify drop_last was set correctly
+        # Verify drop_last was set correctly and log dataset info
         if self.world_size > 1:
             if dataloader.drop_last != drop_last:
                 logging.error(
@@ -1042,6 +1042,28 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 )
             else:
                 logging.info(f"Verified: DataLoader.drop_last={dataloader.drop_last} (world_size={self.world_size})")
+            
+            # CRITICAL: Log dataset info immediately after dataloader creation
+            # This ensures we see dataset info even if setup_training_data is called later
+            if hasattr(dataloader, 'dataset'):
+                dataset_len = len(dataloader.dataset)
+                batch_size = config['batch_size']
+                from common.data.dataset import ConcatDataset
+                is_concat_dataset = isinstance(dataloader.dataset, ConcatDataset)
+                is_iterable_dataset = isinstance(dataloader.dataset, torch.utils.data.IterableDataset)
+                is_tarred_like = is_iterable_dataset and not is_concat_dataset
+                
+                if is_concat_dataset or is_tarred_like:
+                    batches_per_rank = dataset_len // batch_size
+                else:
+                    batches_per_rank = (dataset_len // self.world_size) // batch_size
+                
+                dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
+                logging.info(
+                    f"[DATALOADER CREATED] Rank {self.global_rank}: dataset_len={dataset_len}, batch_size={batch_size}, "
+                    f"batches_per_rank={batches_per_rank}, drop_last={dataloader.drop_last}, "
+                    f"dataset_type={dataset_type}, world_size={self.world_size}"
+                )
         
         return dataloader
 
@@ -1189,23 +1211,28 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 else:
                     expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
                 
-                # Log every 10 batches for debugging
-                if batch_idx % 10 == 0 or batch_idx >= expected_batches_per_rank - 1:
+                # Log every 10 batches for debugging, and ALWAYS log near expected max
+                # CRITICAL: Log more frequently near the limit to catch sync issues
+                log_interval = 10 if batch_idx < expected_batches_per_rank - 20 else 1
+                if batch_idx % log_interval == 0 or batch_idx >= expected_batches_per_rank - 5:
                     dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
                     logging.info(
-                        f"Rank {self.global_rank}: batch_idx={batch_idx}, expected_max={expected_batches_per_rank - 1}, "
+                        f"[TRAINING_STEP] Rank {self.global_rank}: batch_idx={batch_idx}, expected_max={expected_batches_per_rank - 1}, "
                         f"dataset_len={dataset_len}, batch_size={batch_size}, drop_last={drop_last_actual}, "
-                        f"dataset_type={dataset_type}"
+                        f"dataset_type={dataset_type}, remaining={expected_batches_per_rank - batch_idx - 1}"
                     )
                 
                 # Skip if batch_idx exceeds expected batches (safety check)
                 if batch_idx >= expected_batches_per_rank:
                     dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
-                    logging.warning(
-                        f"Rank {self.global_rank}: Skipping batch {batch_idx} (expected max: {expected_batches_per_rank - 1}, "
-                        f"drop_last={drop_last_actual}, dataset_type={dataset_type})"
+                    logging.error(
+                        f"[SKIP BATCH] Rank {self.global_rank}: batch_idx={batch_idx} >= expected_max={expected_batches_per_rank - 1}, "
+                        f"drop_last={drop_last_actual}, dataset_type={dataset_type}, dataset_len={dataset_len}, "
+                        f"batch_size={batch_size}, world_size={self.world_size}. "
+                        "Skipping to prevent DDP sync issues!"
                     )
-                    return None  # Skip this batch to prevent DDP sync issues
+                    # Return dummy loss dict instead of None to prevent PyTorch Lightning errors
+                    return {'loss': torch.tensor(0.0, device=self.device), 'log': {}}
         
         log_probs, encoded_len, masks, tokens = self.forward(
             input_signal=batch.audio,
