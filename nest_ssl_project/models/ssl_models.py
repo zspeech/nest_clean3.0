@@ -87,17 +87,9 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
     def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         # Get global rank and total number of GPU workers for IterableDataset partitioning, if applicable
         # Global_rank and local_rank is set by LightningModule in Lightning 1.2.0
-        # Align with NeMo: directly use trainer.world_size
-        # Note: In DDP mode, trainer.world_size may not be available during __init__
-        # It will be set correctly when trainer is attached via set_trainer()
         self.world_size = 1
         if trainer is not None:
-            # Try to get world_size from trainer, but it may not be available during __init__
-            if hasattr(trainer, 'world_size'):
-                self.world_size = trainer.world_size
-            elif hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
-                if trainer.num_devices and trainer.num_nodes:
-                    self.world_size = trainer.num_devices * trainer.num_nodes
+            self.world_size = trainer.world_size
 
         super().__init__(cfg=cfg, trainer=trainer)
         self.preprocessor = SpeechEncDecSelfSupervisedModel.from_config_dict(self._cfg.preprocessor)
@@ -263,14 +255,6 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
             -   :class:`~nemo.collections.asr.data.audio_to_text.TarredAudioToBPEDataset`
             -   :class:`~nemo.collections.asr.data.audio_to_text_dali.AudioToCharDALIDataset`
         """
-        # Update world_size from trainer if available (trainer may be set after __init__)
-        if self._trainer is not None:
-            if hasattr(self._trainer, 'world_size'):
-                self.world_size = self._trainer.world_size
-            elif hasattr(self._trainer, 'num_devices') and hasattr(self._trainer, 'num_nodes'):
-                if self._trainer.num_devices and self._trainer.num_nodes:
-                    self.world_size = self._trainer.num_devices * self._trainer.num_nodes
-        
         if 'shuffle' not in train_data_config:
             train_data_config['shuffle'] = True
 
@@ -278,13 +262,6 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
         self._update_dataset_config(dataset_name='train', config=train_data_config)
 
         self._train_dl = self._setup_dataloader_from_config(config=train_data_config)
-
-        # Debug: Print dataloader info from all ranks (force all ranks to print)
-        if self._train_dl is not None:
-            batches_per_rank = len(self._train_dl)
-            dataset_size = len(self._train_dl.dataset) if hasattr(self._train_dl, 'dataset') else 'N/A'
-            print(f"[Rank {self.global_rank}/{self.world_size}] Training dataloader created. "
-                  f"Batches per rank: {batches_per_rank}, Dataset size: {dataset_size}", flush=True)
 
         # Need to set this because if using an IterableDataset, the length of the dataloader is the total number
         # of samples rather than the number of batches, and this messes up the tqdm progress bar.
@@ -324,14 +301,6 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
             -   :class:`~nemo.collections.asr.data.audio_to_text.TarredAudioToBPEDataset`
             -   :class:`~nemo.collections.asr.data.audio_to_text_dali.AudioToCharDALIDataset`
         """
-        # Update world_size from trainer if available (trainer may be set after __init__)
-        if self._trainer is not None:
-            if hasattr(self._trainer, 'world_size'):
-                self.world_size = self._trainer.world_size
-            elif hasattr(self._trainer, 'num_devices') and hasattr(self._trainer, 'num_nodes'):
-                if self._trainer.num_devices and self._trainer.num_nodes:
-                    self.world_size = self._trainer.num_devices * self._trainer.num_nodes
-        
         if 'shuffle' not in val_data_config:
             val_data_config['shuffle'] = False
 

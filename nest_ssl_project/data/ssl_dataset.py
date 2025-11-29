@@ -756,18 +756,16 @@ def get_audio_noise_dataset_from_config(
     is_concat = config.get('is_concat', False)
     if is_concat:
         if config.get('concat_sampling_technique', None) is None:
-            if is_global_rank_zero():
-                logging.warning(
-                    f"Concat dataset requires `concat_sampling_technique` but it was not provided, using round-robin. Config: {config}"
-                )
+            logging.warning(
+                f"Concat dataset requires `concat_sampling_technique` but it was not provided, using round-robin. Config: {config}"
+            )
             config['concat_sampling_technique'] = 'round-robin'
 
         if config['concat_sampling_technique'] == 'random':
             if not 'concat_sampling_probabilities' in config:
-                if is_global_rank_zero():
-                    logging.warning(
-                        f"Concat dataset requires `concat_sampling_probabilities` list, using uniform weights. Config: {config}"
-                    )
+                logging.warning(
+                    f"Concat dataset requires `concat_sampling_probabilities` list, using uniform weights. Config: {config}"
+                )
                 with open_dict(config):
                     config['concat_sampling_probabilities'] = [1 / len(config['manifest_filepath'])] * len(
                         config['manifest_filepath']
