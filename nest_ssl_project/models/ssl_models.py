@@ -273,30 +273,38 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
             total_batches = batches_per_rank * self.world_size
             
             if self.world_size > 1:
+                # Get actual drop_last from dataloader
+                drop_last_actual = getattr(self._train_dl, 'drop_last', False)
                 logging.info(
                     f"DDP Training: dataset_len={dataset_len}, batch_size={batch_size}, "
                     f"world_size={self.world_size}, batches_per_rank={batches_per_rank}, "
-                    f"total_batches={total_batches}"
+                    f"total_batches={total_batches}, drop_last={drop_last_actual}, "
+                    f"global_rank={self.global_rank}"
                 )
                 
                 # Ensure limit_train_batches is set correctly for DDP
                 if self._trainer is not None:
+                    original_limit = self._trainer.limit_train_batches
                     if isinstance(self._trainer.limit_train_batches, float):
                         # Convert float to int based on batches per rank
                         self._trainer.limit_train_batches = int(
                             self._trainer.limit_train_batches * batches_per_rank
                         )
                         logging.info(
-                            f"Adjusted limit_train_batches to {self._trainer.limit_train_batches} "
+                            f"Adjusted limit_train_batches from {original_limit} to {self._trainer.limit_train_batches} "
                             f"(batches_per_rank={batches_per_rank})"
                         )
                     elif isinstance(self._trainer.limit_train_batches, int):
-                        # Ensure limit doesn't exceed batches_per_rank
+                        # CRITICAL: Force limit to batches_per_rank to prevent sync issues
                         if self._trainer.limit_train_batches > batches_per_rank:
                             logging.warning(
                                 f"limit_train_batches ({self._trainer.limit_train_batches}) > batches_per_rank "
-                                f"({batches_per_rank}), this may cause synchronization issues"
+                                f"({batches_per_rank}), forcing to batches_per_rank to prevent sync issues"
                             )
+                            self._trainer.limit_train_batches = batches_per_rank
+                        logging.info(
+                            f"limit_train_batches={self._trainer.limit_train_batches}, batches_per_rank={batches_per_rank}"
+                        )
                 elif self._trainer is None:
                     logging.warning(
                         "Model Trainer was not set before constructing the dataset, incorrect number of "
@@ -951,17 +959,31 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         # CRITICAL: Force drop_last=True for DDP training to prevent hanging
         # Even if config has drop_last=True, we need to ensure it's enforced for multi-GPU training
         # This is especially critical with 4+ GPUs where data distribution is more uneven
-        drop_last = config.get('drop_last', False)
+        config_drop_last = config.get('drop_last', False)
+        logging.info(
+            f"Config drop_last value: {config_drop_last} (type: {type(config_drop_last)}, "
+            f"config keys: {list(config.keys())[:10]}...)"
+        )
+        
+        drop_last = config_drop_last
         if self.world_size > 1:
             # In DDP mode, always drop last batch to ensure all ranks process same number of batches
             # This prevents deadlock when different ranks have different batch counts
             drop_last = True
-            if not config.get('drop_last', False):
-                logging.warning(
-                    f"drop_last was False in config but forced to True for DDP training (world_size={self.world_size})"
-                )
+            logging.info(
+                f"DDP Training: drop_last forced to True (config had drop_last={config_drop_last}, "
+                f"world_size={self.world_size}, global_rank={self.global_rank})"
+            )
         
-        return torch.utils.data.DataLoader(
+        # For IterableDataset, drop_last may not work as expected, so we rely on training_step skip mechanism
+        is_iterable = isinstance(dataset, torch.utils.data.IterableDataset)
+        if is_iterable and self.world_size > 1:
+            logging.info(
+                f"Using IterableDataset with DDP: drop_last={drop_last} may not fully prevent sync issues, "
+                "relying on training_step skip mechanism"
+            )
+        
+        dataloader = torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
@@ -970,6 +992,18 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
+        
+        # Verify drop_last was set correctly
+        if self.world_size > 1:
+            if dataloader.drop_last != drop_last:
+                logging.error(
+                    f"CRITICAL: DataLoader.drop_last mismatch! Expected {drop_last}, got {dataloader.drop_last}. "
+                    "This may cause DDP synchronization issues!"
+                )
+            else:
+                logging.info(f"Verified: DataLoader.drop_last={dataloader.drop_last} (world_size={self.world_size})")
+        
+        return dataloader
 
     @property
     def input_types(self) -> Optional[Dict[str, NeuralType]]:
@@ -1101,12 +1135,21 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             if hasattr(self._train_dl, 'dataset'):
                 dataset_len = len(self._train_dl.dataset)
                 batch_size = self._train_dl.batch_size
+                drop_last_actual = getattr(self._train_dl, 'drop_last', False)
                 expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
+                
+                # Log every 10 batches for debugging
+                if batch_idx % 10 == 0 or batch_idx >= expected_batches_per_rank - 1:
+                    logging.info(
+                        f"Rank {self.global_rank}: batch_idx={batch_idx}, expected_max={expected_batches_per_rank - 1}, "
+                        f"dataset_len={dataset_len}, batch_size={batch_size}, drop_last={drop_last_actual}"
+                    )
                 
                 # Skip if batch_idx exceeds expected batches (safety check)
                 if batch_idx >= expected_batches_per_rank:
                     logging.warning(
-                        f"Rank {self.global_rank}: Skipping batch {batch_idx} (expected max: {expected_batches_per_rank - 1})"
+                        f"Rank {self.global_rank}: Skipping batch {batch_idx} (expected max: {expected_batches_per_rank - 1}, "
+                        f"drop_last={drop_last_actual})"
                     )
                     return None  # Skip this batch to prevent DDP sync issues
         
