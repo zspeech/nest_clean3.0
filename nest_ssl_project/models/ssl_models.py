@@ -263,27 +263,58 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
 
         self._train_dl = self._setup_dataloader_from_config(config=train_data_config)
 
-        # Need to set this because if using an IterableDataset, the length of the dataloader is the total number
-        # of samples rather than the number of batches, and this messes up the tqdm progress bar.
-        # So we set the number of steps manually (to the correct number) to fix this.
-        if (
-            self._train_dl is not None
-            and hasattr(self._train_dl, 'dataset')
-            and isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
-        ):
-            # We also need to check if limit_train_batches is already set.
-            # If it's an int, we assume that the user has set it to something sane, i.e. <= # training batches,
-            # and don't change it. Otherwise, adjust batches accordingly if it's a float (including 1.0).
-            if self._trainer is not None and isinstance(self._trainer.limit_train_batches, float):
-                self._trainer.limit_train_batches = int(
-                    self._trainer.limit_train_batches
-                    * ceil((len(self._train_dl.dataset) / self.world_size) / train_data_config['batch_size'])
+        # CRITICAL: Ensure all ranks process the same number of batches for DDP synchronization
+        # Calculate expected number of batches per rank
+        if self._train_dl is not None and hasattr(self._train_dl, 'dataset'):
+            dataset_len = len(self._train_dl.dataset)
+            batch_size = train_data_config['batch_size']
+            # With drop_last=True, each rank processes floor((dataset_len / world_size) / batch_size) batches
+            batches_per_rank = (dataset_len // self.world_size) // batch_size
+            total_batches = batches_per_rank * self.world_size
+            
+            if self.world_size > 1:
+                logging.info(
+                    f"DDP Training: dataset_len={dataset_len}, batch_size={batch_size}, "
+                    f"world_size={self.world_size}, batches_per_rank={batches_per_rank}, "
+                    f"total_batches={total_batches}"
                 )
-            elif self._trainer is None:
-                logging.warning(
-                    "Model Trainer was not set before constructing the dataset, incorrect number of "
-                    "training batches will be used. Please set the trainer and rebuild the dataset."
-                )
+                
+                # Ensure limit_train_batches is set correctly for DDP
+                if self._trainer is not None:
+                    if isinstance(self._trainer.limit_train_batches, float):
+                        # Convert float to int based on batches per rank
+                        self._trainer.limit_train_batches = int(
+                            self._trainer.limit_train_batches * batches_per_rank
+                        )
+                        logging.info(
+                            f"Adjusted limit_train_batches to {self._trainer.limit_train_batches} "
+                            f"(batches_per_rank={batches_per_rank})"
+                        )
+                    elif isinstance(self._trainer.limit_train_batches, int):
+                        # Ensure limit doesn't exceed batches_per_rank
+                        if self._trainer.limit_train_batches > batches_per_rank:
+                            logging.warning(
+                                f"limit_train_batches ({self._trainer.limit_train_batches}) > batches_per_rank "
+                                f"({batches_per_rank}), this may cause synchronization issues"
+                            )
+                elif self._trainer is None:
+                    logging.warning(
+                        "Model Trainer was not set before constructing the dataset, incorrect number of "
+                        "training batches will be used. Please set the trainer and rebuild the dataset."
+                    )
+            
+            # Need to set this because if using an IterableDataset, the length of the dataloader is the total number
+            # of samples rather than the number of batches, and this messes up the tqdm progress bar.
+            # So we set the number of steps manually (to the correct number) to fix this.
+            if isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset):
+                # We also need to check if limit_train_batches is already set.
+                # If it's an int, we assume that the user has set it to something sane, i.e. <= # training batches,
+                # and don't change it. Otherwise, adjust batches accordingly if it's a float (including 1.0).
+                if self._trainer is not None and isinstance(self._trainer.limit_train_batches, float):
+                    self._trainer.limit_train_batches = int(
+                        self._trainer.limit_train_batches
+                        * ceil((len(self._train_dl.dataset) / self.world_size) / train_data_config['batch_size'])
+                    )
 
     def setup_validation_data(self, val_data_config: Optional[Union[DictConfig, Dict]]):
         """
@@ -917,13 +948,24 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         if num_workers == 0:
             pin_memory = False
         
-        # Align with NeMo original: use drop_last from config, rely on PyTorch Lightning's DistributedSampler
-        # and limit_train_batches adjustment in setup_training_data to ensure batch synchronization
+        # CRITICAL: Force drop_last=True for DDP training to prevent hanging
+        # Even if config has drop_last=True, we need to ensure it's enforced for multi-GPU training
+        # This is especially critical with 4+ GPUs where data distribution is more uneven
+        drop_last = config.get('drop_last', False)
+        if self.world_size > 1:
+            # In DDP mode, always drop last batch to ensure all ranks process same number of batches
+            # This prevents deadlock when different ranks have different batch counts
+            drop_last = True
+            if not config.get('drop_last', False):
+                logging.warning(
+                    f"drop_last was False in config but forced to True for DDP training (world_size={self.world_size})"
+                )
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
-            drop_last=config.get('drop_last', False),
+            drop_last=drop_last,
             shuffle=shuffle,
             num_workers=num_workers,
             pin_memory=pin_memory,
