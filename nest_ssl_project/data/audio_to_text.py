@@ -18,13 +18,16 @@ Simplified version adapted from NeMo's audio_to_text.py
 """
 
 import io
+import math
 import os
+import random
 from collections.abc import Iterable as IterableABC
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import braceexpand
+import numpy as np
 import torch
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import ChainDataset, Dataset, IterableDataset
 
 # Import from local modules
 from parts.preprocessing.features import WaveformFeaturizer
@@ -588,4 +591,73 @@ class TarredAudioToCharDataset(_TarredAudioToTextDataset):
             return_sample_id=return_sample_id,
             manifest_parse_func=manifest_parse_func,
         )
+
+
+class BucketingIterator:
+    """Iterator for bucketing dataset."""
+    def __init__(self, wrapped_ds, bucketing_batch_size):
+        self.wrapped_ds = wrapped_ds
+        self.wrapped_iter = None
+        self.bucketing_batch_size = bucketing_batch_size
+
+    def __iter__(self):
+        self.wrapped_iter = iter(self.wrapped_ds)
+        return self
+
+    def __next__(self):
+        batches = []
+        for idx in range(self.bucketing_batch_size):
+            try:
+                sample = next(self.wrapped_iter)
+            except StopIteration:
+                break
+            batches.append(sample)
+        if len(batches) == 0:
+            raise StopIteration
+        return batches
+
+
+class BucketingDataset(IterableDataset):
+    """
+    A Dataset which wraps another IterableDataset and adopts it for bucketing
+    Args:
+        dataset (IterableDataset): The IterableDataset to get wrapped
+        bucketing_batch_size (int): Number of samples to build a batch
+    """
+
+    def __init__(
+        self,
+        dataset: IterableDataset,
+        bucketing_batch_size: int,
+    ):
+        self.wrapped_dataset = dataset
+        self.bucketing_batch_size = bucketing_batch_size
+        super().__init__()
+
+    def __iter__(self):
+        return BucketingIterator(
+            wrapped_ds=self.wrapped_dataset._dataset, bucketing_batch_size=self.bucketing_batch_size
+        ).__iter__()
+
+    def __len__(self):
+        return int(math.ceil(len(self.wrapped_dataset) / float(self.bucketing_batch_size)))
+
+
+class RandomizedChainDataset(ChainDataset):
+    """Randomized chain dataset that shuffles datasets."""
+    def __init__(self, datasets: Iterable[Dataset], rnd_seed=0) -> None:
+        super(RandomizedChainDataset, self).__init__(list(datasets))
+        self.rnd_gen = np.random.RandomState(rnd_seed)
+
+    def __iter__(self):
+        shuffled_order = self.rnd_gen.permutation(len(self.datasets))
+        for dataset_idx in shuffled_order:
+            d = self.datasets[dataset_idx]
+            assert isinstance(d, IterableDataset), "ChainDataset only supports IterableDataset"
+            for idx, x in enumerate(d):
+                yield x
+                # in case d is an infinite dataset, we want to break the loop
+                # so that the other datasets get a chance to yield too
+                if idx >= len(d) - 1:
+                    break
 

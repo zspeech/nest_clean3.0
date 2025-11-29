@@ -2,6 +2,15 @@
 
 ## ✅ 已实现的 Bucket Strategy 优化
 
+### 0. Bucketing Strategy 对齐 NeMo
+- **已实现：** `bucketing_strategy` 和 `bucketing_batch_size` 参数支持
+- **支持策略：**
+  - `synced_randomized`: 同步随机化（所有rank使用相同随机种子）
+  - `fully_randomized`: 完全随机化（每个rank使用不同随机种子）
+  - `fixed_order`: 固定顺序
+- **自适应batch size：** 支持 `bucketing_batch_size` 为不同bucket设置不同的batch size
+- **NeMo对齐：** 完全对齐NeMo原版实现
+
 ### 1. `gradient_as_bucket_view: true`
 - **作用：** 使用梯度桶作为视图，而不是复制梯度
 - **性能提升：** 

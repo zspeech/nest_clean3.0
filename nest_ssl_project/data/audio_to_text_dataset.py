@@ -180,8 +180,81 @@ def get_tarred_dataset(
 def get_chain_dataset(datasets, ds_config, rank):
     """
     Create a chain dataset from multiple datasets.
-    Simplified version.
+    Aligned with NeMo original implementation to support bucketing strategy.
     """
-    from torch.utils.data import ChainDataset
-    return ChainDataset(datasets)
+    import random
+    from omegaconf import ListConfig
+    
+    if len(datasets) > 1:
+        if ds_config.get('bucketing_batch_size', None) is not None:
+            bucketing_batch_sizes = calc_bucketing_batch_sizes(ds_config, len(datasets))
+            logger.info(
+                f"Batch bucketing is enabled for {len(datasets)} buckets with adaptive batch sizes of {bucketing_batch_sizes}!"
+            )
+            for idx, dataset in enumerate(datasets):
+                datasets[idx] = audio_to_text.BucketingDataset(
+                    dataset=dataset, bucketing_batch_size=bucketing_batch_sizes[idx]
+                )
+        else:
+            logger.info(
+                f"Batch bucketing is enabled for {len(datasets)} buckets with fixed batch size of {ds_config['batch_size']}!"
+            )
+
+    if len(datasets) == 1:
+        return datasets[0]
+    
+    bucketing_strategy = ds_config.get('bucketing_strategy', 'synced_randomized')
+    if bucketing_strategy == 'fixed_order':
+        from torch.utils.data import ChainDataset
+        return ChainDataset(datasets)
+    elif bucketing_strategy == 'synced_randomized':
+        return audio_to_text.RandomizedChainDataset(datasets=datasets, rnd_seed=0)
+    elif bucketing_strategy == 'fully_randomized':
+        return audio_to_text.RandomizedChainDataset(datasets=datasets, rnd_seed=random.randint(0, 30000) + rank)
+    else:
+        raise ValueError(
+            f'bucketing_strategy={bucketing_strategy} is not supported! Supported strategies are [fixed_order, fully_randomized, synced_randomized].'
+        )
+
+
+def calc_bucketing_batch_sizes(ds_config, datasets_len):
+    """Calculate bucketing batch sizes from config."""
+    from omegaconf import ListConfig
+    
+    bucketing_batch_size = ds_config['bucketing_batch_size']
+    bucketing_weights = ds_config.get('bucketing_weights', None)  # To adjust for upsampled buckets
+
+    bucketing_batch_sizes = []
+
+    if ds_config['batch_size'] != 1:
+        raise ValueError(
+            f"batch_size should be set to one when bucketing_batch_size is set and adaptive bucketing is enabled (batch_size={ds_config['batch_size']}!"
+        )
+    if type(bucketing_batch_size) == int:  # linear scaling
+        if bucketing_weights:  # Want same batchsize for the same duplicated bucket
+            for idx, weight in enumerate(bucketing_weights):
+                scale_factor = datasets_len - idx
+                [bucketing_batch_sizes.append(scale_factor * bucketing_batch_size) for _ in range(weight)]
+        else:
+            for idx in range(datasets_len):
+                scale_factor = datasets_len - idx
+                bucketing_batch_sizes.append(scale_factor * bucketing_batch_size)
+    elif isinstance(bucketing_batch_size, ListConfig) or isinstance(
+        bucketing_batch_size, list
+    ):  # assigned bucket sizes
+        if bucketing_weights:  # Want same batchsize for same duplicated bucket
+            for idx, weight in enumerate(bucketing_weights):
+                [bucketing_batch_sizes.append(bucketing_batch_size[idx]) for _ in range(weight)]
+        else:
+            bucketing_batch_sizes = bucketing_batch_size
+    else:
+        raise ValueError(
+            f"bucketing_batch_size should be an integer or a list (bucketing_batch_size={bucketing_batch_size})!"
+        )
+
+    if len(bucketing_batch_sizes) != datasets_len:
+        raise ValueError(
+            f"batch_size should have the same length as the number of buckets ({len(bucketing_batch_sizes)}!={datasets_len}) "
+        )
+    return bucketing_batch_sizes
 

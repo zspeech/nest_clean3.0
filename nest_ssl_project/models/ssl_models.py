@@ -280,11 +280,10 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
                     * ceil((len(self._train_dl.dataset) / self.world_size) / train_data_config['batch_size'])
                 )
             elif self._trainer is None:
-                if is_global_rank_zero():
-                    logging.warning(
-                        "Model Trainer was not set before constructing the dataset, incorrect number of "
-                        "training batches will be used. Please set the trainer and rebuild the dataset."
-                    )
+                logging.warning(
+                    "Model Trainer was not set before constructing the dataset, incorrect number of "
+                    "training batches will be used. Please set the trainer and rebuild the dataset."
+                )
 
     def setup_validation_data(self, val_data_config: Optional[Union[DictConfig, Dict]]):
         """
@@ -918,19 +917,13 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         if num_workers == 0:
             pin_memory = False
         
-        # CRITICAL: Force drop_last=True for DDP training to prevent hanging
-        # When different ranks have different batch counts, DDP all_reduce will deadlock
-        # This is especially critical with 3+ GPUs where data distribution is more uneven
-        drop_last = config.get('drop_last', False)
-        if self.world_size > 1:
-            # In DDP mode, always drop last batch to ensure all ranks process same number of batches
-            drop_last = True
-        
+        # Align with NeMo original: use drop_last from config, rely on PyTorch Lightning's DistributedSampler
+        # and limit_train_batches adjustment in setup_training_data to ensure batch synchronization
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
-            drop_last=drop_last,
+            drop_last=config.get('drop_last', False),
             shuffle=shuffle,
             num_workers=num_workers,
             pin_memory=pin_memory,
