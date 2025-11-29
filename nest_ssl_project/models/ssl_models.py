@@ -918,11 +918,19 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         if num_workers == 0:
             pin_memory = False
         
+        # CRITICAL: Force drop_last=True for DDP training to prevent hanging
+        # When different ranks have different batch counts, DDP all_reduce will deadlock
+        # This is especially critical with 3+ GPUs where data distribution is more uneven
+        drop_last = config.get('drop_last', False)
+        if self.world_size > 1:
+            # In DDP mode, always drop last batch to ensure all ranks process same number of batches
+            drop_last = True
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
-            drop_last=config.get('drop_last', False),
+            drop_last=drop_last,
             shuffle=shuffle,
             num_workers=num_workers,
             pin_memory=pin_memory,
