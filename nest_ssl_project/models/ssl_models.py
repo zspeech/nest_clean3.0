@@ -1250,14 +1250,44 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 # Calculate expected batches per rank based on dataset type
                 # ConcatDataset and TarredDataset: dataset_len is already per-rank
                 # Regular dataset: divide by world_size
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(
+                        f"[CALC BATCHES] Rank {self.global_rank}: Calculating expected_batches_per_rank, "
+                        f"is_concat={is_concat_dataset}, is_tarred={is_tarred_like}, world_size={self.world_size}"
+                    )
+                
                 if is_concat_dataset or is_tarred_like:
                     expected_batches_per_rank = dataset_len // batch_size
+                    if batch_idx < 100 or batch_idx % 10 == 0:
+                        logging.info(
+                            f"[CALC BATCHES] Rank {self.global_rank}: Concat/Tarred: "
+                            f"expected_batches_per_rank={expected_batches_per_rank} (dataset_len={dataset_len} // batch_size={batch_size})"
+                        )
                 else:
                     expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
+                    if batch_idx < 100 or batch_idx % 10 == 0:
+                        logging.info(
+                            f"[CALC BATCHES] Rank {self.global_rank}: Regular: "
+                            f"expected_batches_per_rank={expected_batches_per_rank} "
+                            f"((dataset_len={dataset_len} // world_size={self.world_size}) // batch_size={batch_size})"
+                        )
                 
                 # Log every 10 batches for debugging, and ALWAYS log near expected max
                 # CRITICAL: Log more frequently near the limit to catch sync issues
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(
+                        f"[CALC BATCHES] Rank {self.global_rank}: Calculating log_interval, "
+                        f"batch_idx={batch_idx}, expected_batches_per_rank={expected_batches_per_rank}"
+                    )
+                
                 log_interval = 10 if batch_idx < expected_batches_per_rank - 20 else 1
+                
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(
+                        f"[CALC BATCHES] Rank {self.global_rank}: log_interval={log_interval}, "
+                        f"should_log={batch_idx % log_interval == 0 or batch_idx >= expected_batches_per_rank - 5}"
+                    )
+                
                 if batch_idx % log_interval == 0 or batch_idx >= expected_batches_per_rank - 5:
                     dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
                     logging.info(
@@ -1267,6 +1297,13 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                     )
                 
                 # Skip if batch_idx exceeds expected batches (safety check)
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(
+                        f"[CALC BATCHES] Rank {self.global_rank}: Checking skip condition, "
+                        f"batch_idx={batch_idx}, expected_batches_per_rank={expected_batches_per_rank}, "
+                        f"should_skip={batch_idx >= expected_batches_per_rank}"
+                    )
+                
                 if batch_idx >= expected_batches_per_rank:
                     dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
                     logging.error(
@@ -1277,6 +1314,12 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                     )
                     # Return dummy loss dict instead of None to prevent PyTorch Lightning errors
                     return {'loss': torch.tensor(0.0, device=self.device), 'log': {}}
+                
+                if batch_idx < 100 or batch_idx % 10 == 0:
+                    logging.info(
+                        f"[CALC BATCHES] Rank {self.global_rank}: Finished batch calculation checks, "
+                        f"proceeding to forward pass"
+                    )
         
         # Log before forward pass to catch hanging in forward
         if batch_idx % 10 == 0 or batch_idx < 10:
