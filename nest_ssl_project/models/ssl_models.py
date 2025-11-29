@@ -743,45 +743,17 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
         self.quantizer = self.from_config_dict(self.cfg.quantizer)
         self.mask_processor = self.from_config_dict(self.cfg.masking)
         self.encoder = self.from_config_dict(self.cfg.encoder)
-        # Fix DDP deadlock: disable sync_max_audio_length to prevent hanging in multi-GPU training
-        # When sync_max_audio_length=True, encoder performs all_reduce which can cause deadlock
-        # if ranks are not synchronized (e.g., different batch sizes, early stopping, etc.)
-        # CRITICAL: Check encoder type and attributes
+        # Align with NeMo original: encoder is created without modifying sync_max_audio_length
+        # If sync_max_audio_length needs to be disabled, it should be set in config file
+        # Check encoder type for debugging
         encoder_type = type(self.encoder).__name__
         encoder_module = type(self.encoder).__module__
+        has_sync_max = hasattr(self.encoder, 'sync_max_audio_length')
+        sync_max_value = getattr(self.encoder, 'sync_max_audio_length', None)
         logging.info(
             f"Rank {self.global_rank}: encoder type={encoder_type}, module={encoder_module}, "
-            f"has_sync_max={hasattr(self.encoder, 'sync_max_audio_length')}, "
-            f"encoder_attrs={[attr for attr in dir(self.encoder) if 'sync' in attr.lower() or 'max' in attr.lower()][:10]}"
+            f"has_sync_max_audio_length={has_sync_max}, sync_max_audio_length={sync_max_value}"
         )
-        
-        if hasattr(self.encoder, 'sync_max_audio_length'):
-            original_sync_max = self.encoder.sync_max_audio_length
-            self.encoder.sync_max_audio_length = False
-            logging.info(
-                f"Rank {self.global_rank}: Set encoder.sync_max_audio_length from {original_sync_max} to False "
-                f"to prevent DDP deadlock (world_size={self.world_size})"
-            )
-        else:
-            # Try to find the actual encoder module if it's wrapped
-            actual_encoder = self.encoder
-            if hasattr(self.encoder, 'module'):
-                actual_encoder = self.encoder.module
-            elif hasattr(self.encoder, 'encoder'):
-                actual_encoder = self.encoder.encoder
-            
-            if hasattr(actual_encoder, 'sync_max_audio_length'):
-                original_sync_max = actual_encoder.sync_max_audio_length
-                actual_encoder.sync_max_audio_length = False
-                logging.info(
-                    f"Rank {self.global_rank}: Found sync_max_audio_length in wrapped encoder, "
-                    f"set from {original_sync_max} to False"
-                )
-            else:
-                logging.warning(
-                    f"Rank {self.global_rank}: encoder (type={encoder_type}) does not have sync_max_audio_length attribute, "
-                    "cannot disable DDP synchronization. This may cause deadlock if encoder uses all_reduce!"
-                )
         self.decoder = self.from_config_dict(self.cfg.decoder)
         self.loss = self.from_config_dict(self.cfg.loss)
 

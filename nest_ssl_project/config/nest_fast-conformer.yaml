@@ -142,6 +142,12 @@ model:
     n_layers: 17
     d_model: 512
     use_bias: True # whether to apply bias in the feedforward, MHA and convolution modules
+    # CRITICAL: Disable sync_max_audio_length to prevent DDP deadlock
+    # When sync_max_audio_length=True, encoder performs all_reduce which can cause deadlock
+    # if ranks are not synchronized (e.g., different batch sizes, early stopping, etc.)
+    # See NeMo ConformerEncoder doc: "Disabling this setting may help with deadlocks in certain
+    # scenarios such as model parallelism, or generally when this module is not being ran on some GPUs"
+    sync_max_audio_length: false
 
     # Sub-sampling params
     subsampling: dw_striding # vggnet, striding, stacking or stacking_norm, dw_striding
