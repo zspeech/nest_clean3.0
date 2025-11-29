@@ -101,8 +101,15 @@ def exp_manager(trainer: pl.Trainer, exp_cfg: Optional[DictConfig] = None):
         trainer.callbacks.append(checkpoint_callback)
         
         # Add callback to log checkpoint save events (aligned with NeMo)
+        # Only log from rank 0 to avoid duplicate output in DDP
+        from utils.logging import is_global_rank_zero
+        
         class CheckpointLoggingCallback(Callback):
             def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+                # Only log from rank 0 (aligned with NeMo)
+                if not is_global_rank_zero():
+                    return
+                    
                 if hasattr(trainer, 'checkpoint_callback') and trainer.checkpoint_callback is not None:
                     cb = trainer.checkpoint_callback
                     if hasattr(cb, 'best_model_path') and cb.best_model_path:
