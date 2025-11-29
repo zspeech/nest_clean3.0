@@ -649,25 +649,34 @@ class ConformerEncoder(NeuralModule, AccessMixin):
 
     def update_max_seq_length(self, seq_length: int, device: torch.device):
         """
-        Match NeMo behavior: optionally synchronize maximum sequence length across ranks.
+        Updates the maximum sequence length for the model.
+
+        Args:
+            seq_length (int): New maximum sequence length.
+            device (torch.device): Device to use for computations.
         """
-        if (
-            self.sync_max_audio_length
-            and torch.distributed.is_available()
-            and torch.distributed.is_initialized()
-        ):
+        # Find global max audio length across all nodes
+        if self.sync_max_audio_length and torch.distributed.is_initialized():
             global_max_len = torch.tensor([seq_length], dtype=torch.float32, device=device)
+
+            # Update across all ranks in the distributed system
             torch.distributed.all_reduce(global_max_len, op=torch.distributed.ReduceOp.MAX)
-            seq_length = int(global_max_len.item())
-        
+
+            seq_length = global_max_len.int().item()
+
         if seq_length > self.max_audio_length:
             self.set_max_audio_length(seq_length)
     
     def set_max_audio_length(self, max_audio_length: int):
-        """Extend positional encodings when sequence length increases."""
+        """
+        Sets maximum input length.
+        Pre-calculates internal seq_range mask.
+
+        Args:
+            max_audio_length (int): New maximum sequence length.
+        """
         self.max_audio_length = max_audio_length
-        if getattr(self, "pos_enc", None) is not None:
-            param = next(self.parameters())
-            device = param.device
-            dtype = param.dtype
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        if self.pos_enc is not None:
             self.pos_enc.extend_pe(max_audio_length, device, dtype)
