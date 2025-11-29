@@ -39,7 +39,7 @@ model:
     trim_silence: false
     max_duration: 60.0
     min_duration: 1.0
-    drop_last: false # set to false for small datasets to use all data
+    drop_last: true # CRITICAL: set to true for DDP training to prevent hanging when ranks have different batch counts
     is_concat: false
     concat_sampling_technique: temperature
     concat_sampling_temperature: 1.0 
