@@ -836,13 +836,30 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
 
         val_loss_mean = torch.stack(loss_list).mean()
         tensorboard_logs = {'val_loss': val_loss_mean}
-        # Return dict with 'log' key, on_validation_epoch_end will call log_dict()
+        # Explicitly log here so Lightning/TQDM prints val_loss like NeMo
+        self.log(
+            'val_loss',
+            val_loss_mean,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+        )
         return {'val_loss': val_loss_mean, 'log': tensorboard_logs}
 
     def multi_test_epoch_end(self, outputs, dataloader_idx: int = 0):
         test_loss_mean = torch.stack([x['test_loss'] for x in outputs]).mean()
         tensorboard_logs = {'test_loss': test_loss_mean}
-        # Return dict with 'log' key, on_test_epoch_end will call log_dict()
+        self.log(
+            'test_loss',
+            test_loss_mean,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+        )
         return {'test_loss': test_loss_mean, 'log': tensorboard_logs}
 
 
