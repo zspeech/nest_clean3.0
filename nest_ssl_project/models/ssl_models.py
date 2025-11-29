@@ -1050,45 +1050,10 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_signal`` and ``processed_signal_len`` arguments."
             )
         if not has_processed_signal:
-            # Detailed input validation before preprocessor call
-            print(f"[Rank {self.global_rank}] About to call preprocessor for input_signal, "
-                  f"input_signal.shape={input_signal.shape if input_signal is not None else None}, "
-                  f"input_signal_length.shape={input_signal_length.shape if input_signal_length is not None else None}", flush=True)
-            
-            if input_signal is not None:
-                # Check for NaN/Inf
-                has_nan = torch.isnan(input_signal).any().item()
-                has_inf = torch.isinf(input_signal).any().item()
-                if has_nan or has_inf:
-                    print(f"[Rank {self.global_rank}] WARNING: input_signal contains NaN={has_nan}, Inf={has_inf}!", flush=True)
-                
-                # Check device
-                preprocessor_device = next(self.preprocessor.parameters()).device if list(self.preprocessor.parameters()) else torch.device('cpu')
-                print(f"[Rank {self.global_rank}] input_signal device: {input_signal.device}, "
-                      f"preprocessor device: {preprocessor_device}, "
-                      f"match: {input_signal.device == preprocessor_device}", flush=True)
-                
-                # Check value range
-                print(f"[Rank {self.global_rank}] input_signal stats: min={input_signal.min().item():.6f}, "
-                      f"max={input_signal.max().item():.6f}, mean={input_signal.mean().item():.6f}, "
-                      f"std={input_signal.std().item():.6f}", flush=True)
-            
-            try:
-                processed_signal, processed_signal_length = self.preprocessor(
-                    input_signal=input_signal,
-                    length=input_signal_length,
-                )
-                print(f"[Rank {self.global_rank}] Preprocessor for input_signal completed, "
-                      f"processed_signal.shape={processed_signal.shape}", flush=True)
-            except Exception as e:
-                print(f"[Rank {self.global_rank}] ERROR in preprocessor call: {e}", flush=True)
-                print(f"[Rank {self.global_rank}] Input details: "
-                      f"shape={input_signal.shape if input_signal is not None else None}, "
-                      f"dtype={input_signal.dtype if input_signal is not None else None}, "
-                      f"device={input_signal.device if input_signal is not None else None}", flush=True)
-                import traceback
-                traceback.print_exc()
-                raise
+            processed_signal, processed_signal_length = self.preprocessor(
+                input_signal=input_signal,
+                length=input_signal_length,
+            )
 
         ### Following code snipet is not used but kept for future reference
         #
@@ -1115,45 +1080,10 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_noisy_input_signal`` and ``processed_noisy_input_signal_len`` arguments."
             )
         if not has_processed_noisy_input_signal:
-            # Detailed input validation before preprocessor call
-            print(f"[Rank {self.global_rank}] About to call preprocessor for noisy_input_signal, "
-                  f"noisy_input_signal.shape={noisy_input_signal.shape if noisy_input_signal is not None else None}, "
-                  f"noisy_input_signal_length.shape={noisy_input_signal_length.shape if noisy_input_signal_length is not None else None}", flush=True)
-            
-            if noisy_input_signal is not None:
-                # Check for NaN/Inf
-                has_nan = torch.isnan(noisy_input_signal).any().item()
-                has_inf = torch.isinf(noisy_input_signal).any().item()
-                if has_nan or has_inf:
-                    print(f"[Rank {self.global_rank}] WARNING: noisy_input_signal contains NaN={has_nan}, Inf={has_inf}!", flush=True)
-                
-                # Check device
-                preprocessor_device = next(self.preprocessor.parameters()).device if list(self.preprocessor.parameters()) else torch.device('cpu')
-                print(f"[Rank {self.global_rank}] noisy_input_signal device: {noisy_input_signal.device}, "
-                      f"preprocessor device: {preprocessor_device}, "
-                      f"match: {noisy_input_signal.device == preprocessor_device}", flush=True)
-                
-                # Check value range
-                print(f"[Rank {self.global_rank}] noisy_input_signal stats: min={noisy_input_signal.min().item():.6f}, "
-                      f"max={noisy_input_signal.max().item():.6f}, mean={noisy_input_signal.mean().item():.6f}, "
-                      f"std={noisy_input_signal.std().item():.6f}", flush=True)
-            
-            try:
-                processed_noisy_input_signal, processed_noisy_input_signal_length = self.preprocessor(
-                    input_signal=noisy_input_signal,
-                    length=noisy_input_signal_length,
-                )
-                print(f"[Rank {self.global_rank}] Preprocessor for noisy_input_signal completed, "
-                      f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape}", flush=True)
-            except Exception as e:
-                print(f"[Rank {self.global_rank}] ERROR in preprocessor call: {e}", flush=True)
-                print(f"[Rank {self.global_rank}] Input details: "
-                      f"shape={noisy_input_signal.shape if noisy_input_signal is not None else None}, "
-                      f"dtype={noisy_input_signal.dtype if noisy_input_signal is not None else None}, "
-                      f"device={noisy_input_signal.device if noisy_input_signal is not None else None}", flush=True)
-                import traceback
-                traceback.print_exc()
-                raise
+            processed_noisy_input_signal, processed_noisy_input_signal_length = self.preprocessor(
+                input_signal=noisy_input_signal,
+                length=noisy_input_signal_length,
+            )
 
         if self.pre_encoder is not None:
             # mask after convolutional sub-sampling
@@ -1161,16 +1091,9 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             _, tokens = self.quantizer(input_signal=feats.transpose(1, 2))
 
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
-            # Debug: Print before encoder call to identify hanging point
-            print(f"[Rank {self.global_rank}] About to call encoder (pre_encoder path), "
-                  f"audio_signal.shape={processed_noisy_input_signal.shape}, "
-                  f"length.shape={processed_noisy_input_signal_length.shape}, "
-                  f"device={processed_noisy_input_signal.device}", flush=True)
             encoded, encoded_len = self.encoder(
                 audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
             )
-            print(f"[Rank {self.global_rank}] Encoder call completed (pre_encoder path), "
-                  f"encoded.shape={encoded.shape}", flush=True)
             masks = self.pre_encoder.get_current_mask()
         else:
             _, tokens = self.quantizer(input_signal=processed_signal)
@@ -1181,55 +1104,24 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             else:
                 masked_signal = processed_noisy_input_signal
                 masks = torch.zeros_like(processed_noisy_input_signal)
-            # Debug: Print before encoder call to identify hanging point
-            print(f"[Rank {self.global_rank}] About to call encoder (no pre_encoder path), "
-                  f"audio_signal.shape={masked_signal.shape}, "
-                  f"length.shape={processed_noisy_input_signal_length.shape}, "
-                  f"device={masked_signal.device}", flush=True)
             encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
-            print(f"[Rank {self.global_rank}] Encoder call completed (no pre_encoder path), "
-                  f"encoded.shape={encoded.shape}", flush=True)
 
         log_probs = self.decoder(encoder_output=encoded)
 
         return log_probs, encoded_len, masks, tokens
 
     def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
-        # Debug: Print batch info to help diagnose hanging issues
-        print(f"[Rank {self.global_rank}] Training step {batch_idx} STARTED, "
-              f"batch size: {batch.audio.size(0)}, "
-              f"audio shape: {batch.audio.shape}, "
-              f"noise shape: {batch.noise.shape}, "
-              f"device: {batch.audio.device}", flush=True)
-        
-        try:
-            print(f"[Rank {self.global_rank}] Batch {batch_idx} calling forward...", flush=True)
-            # Enable forward debugging for batch 71
-            if batch_idx == 71:
-                # Temporarily enable forward debugging by setting a flag
-                # Note: This requires modifying forward to check batch_idx, which we'll do via a class attribute
-                self._debug_forward = True
-            else:
-                self._debug_forward = False
-            
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch.audio,
-                input_signal_length=batch.audio_len,
-                noise_signal=batch.noise,
-                noise_signal_length=batch.noise_len,
-                noisy_input_signal=batch.noisy_audio,
-                noisy_input_signal_length=batch.noisy_audio_len,
-                apply_mask=True,
-            )
-            print(f"[Rank {self.global_rank}] Batch {batch_idx} forward completed, computing loss...", flush=True)
+        log_probs, encoded_len, masks, tokens = self.forward(
+            input_signal=batch.audio,
+            input_signal_length=batch.audio_len,
+            noise_signal=batch.noise,
+            noise_signal_length=batch.noise_len,
+            noisy_input_signal=batch.noisy_audio,
+            noisy_input_signal_length=batch.noisy_audio_len,
+            apply_mask=True,
+        )
 
-            loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
-            print(f"[Rank {self.global_rank}] Batch {batch_idx} loss computed: {loss_value.item():.4f}", flush=True)
-        except Exception as e:
-            print(f"[Rank {self.global_rank}] ERROR in training_step batch {batch_idx}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            raise
+        loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
 
         # Optimize logging: use dictionary for batch logging (more efficient than multiple self.log() calls)
         # This matches NeMo's approach and reduces overhead
