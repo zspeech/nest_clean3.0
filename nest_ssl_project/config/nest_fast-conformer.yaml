@@ -34,7 +34,7 @@ model:
     batch_size: 8 # increased for better GPU utilization (reduce if OOM, increase if GPU memory available)
     shuffle: true
     num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
-    pin_memory: true
+    pin_memory: false # set to false to avoid hanging on Windows/DDP (pin_memory can cause deadlock)
     use_start_end_token: false
     trim_silence: false
     max_duration: 60.0
@@ -73,7 +73,7 @@ model:
     batch_size: 8 # increased for better GPU utilization
     shuffle: false
     num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
-    pin_memory: true
+    pin_memory: false # set to false to avoid hanging on Windows/DDP (pin_memory can cause deadlock)
     use_start_end_token: false
     max_duration: 60.0
     min_duration: 1.0
