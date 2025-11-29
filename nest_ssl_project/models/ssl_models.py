@@ -831,7 +831,7 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
             logging.warning(
                 f'Epoch {self.current_epoch} received no batches for validation dataloader {dataloader_idx}.'
             )
-            return
+            return {}
 
         val_loss_mean = torch.stack(loss_list).mean()
         tensorboard_logs = {'val_loss': val_loss_mean}
