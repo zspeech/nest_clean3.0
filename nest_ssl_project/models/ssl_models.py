@@ -1094,6 +1094,22 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         return log_probs, encoded_len, masks, tokens
 
     def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
+        # CRITICAL: Skip batch if we've exceeded the expected number of batches per rank
+        # This prevents hanging when different ranks have different batch counts
+        if self.world_size > 1 and self._trainer is not None:
+            # Calculate expected batches per rank
+            if hasattr(self._train_dl, 'dataset'):
+                dataset_len = len(self._train_dl.dataset)
+                batch_size = self._train_dl.batch_size
+                expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
+                
+                # Skip if batch_idx exceeds expected batches (safety check)
+                if batch_idx >= expected_batches_per_rank:
+                    logging.warning(
+                        f"Rank {self.global_rank}: Skipping batch {batch_idx} (expected max: {expected_batches_per_rank - 1})"
+                    )
+                    return None  # Skip this batch to prevent DDP sync issues
+        
         log_probs, encoded_len, masks, tokens = self.forward(
             input_signal=batch.audio,
             input_signal_length=batch.audio_len,
@@ -1106,19 +1122,14 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
 
         loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
 
-        # Optimize logging: use dictionary for batch logging (more efficient than multiple self.log() calls)
-        # This matches NeMo's approach and reduces overhead
+        # Align with NeMo original: return dict format for compatibility
         tensorboard_logs = {
+            'learning_rate': self._optimizer.param_groups[0]['lr'] if self._optimizer is not None else 0.0,
+            'global_step': self.trainer.global_step if self.trainer is not None else 0,
             'train_loss': loss_value,
         }
-        if self._optimizer is not None:
-            tensorboard_logs['learning_rate'] = self._optimizer.param_groups[0]['lr']
-        
-        # Log all metrics at once (more efficient)
-        self.log_dict(tensorboard_logs, on_step=True, on_epoch=True, prog_bar=True)
 
-        # Return loss directly (PyTorch Lightning 2.x supports this)
-        return loss_value
+        return {'loss': loss_value, 'log': tensorboard_logs}
 
     def inference_pass(
         self,
