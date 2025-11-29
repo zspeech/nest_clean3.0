@@ -33,10 +33,8 @@ model:
     sample_rate: ${model.sample_rate}
     batch_size: 8 # increased for better GPU utilization (reduce if OOM, increase if GPU memory available)
     shuffle: true
-    num_workers: 8 # set to 0 for Windows compatibility (multiprocessing issues on Windows). Use 8-16 on Linux/Mac for better IO performance
-    pin_memory: true # pin memory for faster GPU transfer
-    persistent_workers: true # keep workers alive between epochs (faster, requires num_workers > 0)
-    prefetch_factor: 4 # number of batches prefetched by each worker (higher = better GPU utilization, more CPU memory)
+    num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
+    pin_memory: true
     use_start_end_token: false
     trim_silence: false
     max_duration: 60.0
@@ -74,10 +72,8 @@ model:
     sample_rate: ${model.sample_rate}
     batch_size: 8 # increased for better GPU utilization
     shuffle: false
-    num_workers: 8 # set to 0 for Windows compatibility (multiprocessing issues on Windows). Use 8-16 on Linux/Mac for better IO performance
-    pin_memory: true # pin memory for faster GPU transfer
-    persistent_workers: true # keep workers alive between epochs (faster, requires num_workers > 0)
-    prefetch_factor: 4 # number of batches prefetched by each worker
+    num_workers: 0 # set to 0 for Windows compatibility (multiprocessing issues on Windows)
+    pin_memory: true
     use_start_end_token: false
     max_duration: 60.0
     min_duration: 1.0

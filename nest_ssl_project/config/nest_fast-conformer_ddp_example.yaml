@@ -20,20 +20,9 @@ trainer:
   val_check_interval: 1.0
   accelerator: gpu
   
-  # DDP Strategy configuration optimized for performance (align with NeMo)
-  # Note: find_unused_parameters has been removed in PyTorch Lightning 2.0+
-  # If you encounter unused parameter errors, ensure all model parameters are used
-  # in the forward pass, or the model will automatically handle unused parameters.
-  strategy:
-    _target_: lightning.pytorch.strategies.DDPStrategy
-    gradient_as_bucket_view: true  # Memory optimization: use gradient buckets as views (reduces memory usage, aligns with NeMo)
-    static_graph: false  # Set to true if model structure doesn't change (faster, but requires fixed computation graph)
-    # Additional optional parameters for further optimization:
-    # ddp_comm_hook: null  # Communication hook for gradient synchronization
-    # ddp_comm_state: null  # State for communication hook
-    # ddp_comm_wrapper: null  # Wrapper for communication hook
-    # model_averaging_period: null  # Period for model averaging (null = disabled)
-    # bucket_cap_mb: 25  # Maximum bucket size in MB (default: 25, can increase for better performance on large models)
+  # DDP Strategy configuration (align with NeMo - use simple 'ddp' string)
+  # NeMo uses simple 'ddp' or 'auto' strategy, not complex DDPStrategy config
+  strategy: ddp  # Use simple string like NeMo examples
   
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
