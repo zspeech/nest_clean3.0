@@ -665,6 +665,11 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
         self.quantizer = self.from_config_dict(self.cfg.quantizer)
         self.mask_processor = self.from_config_dict(self.cfg.masking)
         self.encoder = self.from_config_dict(self.cfg.encoder)
+        # Fix DDP deadlock: disable sync_max_audio_length to prevent hanging in multi-GPU training
+        # When sync_max_audio_length=True, encoder performs all_reduce which can cause deadlock
+        # if ranks are not synchronized (e.g., different batch sizes, early stopping, etc.)
+        if hasattr(self.encoder, 'sync_max_audio_length'):
+            self.encoder.sync_max_audio_length = False
         self.decoder = self.from_config_dict(self.cfg.decoder)
         self.loss = self.from_config_dict(self.cfg.loss)
 
