@@ -202,50 +202,28 @@ def load_noise_audio(
 
     if max_dur is not None and duration is not None and duration > max_dur:
         cnt = 0
-        audio_segment = None
-        last_exception = None
-        # CRITICAL FIX: Limit max_trial to prevent infinite loops (reduce from 100 to 10)
-        # If a file is corrupted, 100 retries can take too long and cause hanging
-        max_trial_limited = min(max_trial, 10)  # Cap at 10 retries to prevent hanging
-        while cnt < max_trial_limited:
-            try:
-                # randomly sample a segment of the noise
-                offset = np.random.uniform(0, duration - max_dur)
+        while cnt < max_trial:
+            # randomly sample a segment of the noise
+            offset = np.random.uniform(0, duration - max_dur)
 
-                audio_segment = AudioSegment.from_file(
-                    audio_file=sample['audio_filepath'],
-                    offset=offset,
-                    duration=max_dur,
-                    target_sr=sample_rate,
-                )
-
-                if sum(audio_segment.samples) > 0:
-                    # break if the segment is not empty
-                    break
-                # If segment is empty, continue to next iteration
-            except Exception as e:
-                # If loading fails, save exception and try again
-                last_exception = e
-                audio_segment = None  # Reset to None on exception
-            cnt += 1
-        
-        # If all retries failed (either all exceptions or all empty), raise exception to be caught by sample_noise
-        if audio_segment is None:
-            error_msg = f"Failed to load noise audio after {max_trial_limited} attempts: {sample['audio_filepath']}"
-            if last_exception is not None:
-                error_msg += f", last exception: {last_exception}"
-            raise RuntimeError(error_msg)
-    else:
-        try:
             audio_segment = AudioSegment.from_file(
                 audio_file=sample['audio_filepath'],
                 offset=offset,
-                duration=duration,
+                duration=max_dur,
                 target_sr=sample_rate,
             )
-        except Exception as e:
-            # If loading fails, raise exception to be caught by sample_noise
-            raise RuntimeError(f"Failed to load noise audio: {sample['audio_filepath']}, exception: {e}")
+
+            if sum(audio_segment.samples) > 0:
+                # break if the segment is not empty
+                break
+            cnt += 1
+    else:
+        audio_segment = AudioSegment.from_file(
+            audio_file=sample['audio_filepath'],
+            offset=offset,
+            duration=duration,
+            target_sr=sample_rate,
+        )
 
     if sum(audio_segment.samples) == 0:
         logging.warning(
