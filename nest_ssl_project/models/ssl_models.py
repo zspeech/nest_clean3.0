@@ -835,15 +835,13 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
 
         val_loss_mean = torch.stack(loss_list).mean()
         tensorboard_logs = {'val_loss': val_loss_mean}
-        # Use self.log() for PyTorch Lightning 2.x compatibility
-        self.log('val_loss', val_loss_mean, on_step=False, on_epoch=True, sync_dist=True)
+        # Return dict with 'log' key, on_validation_epoch_end will call log_dict()
         return {'val_loss': val_loss_mean, 'log': tensorboard_logs}
 
     def multi_test_epoch_end(self, outputs, dataloader_idx: int = 0):
         test_loss_mean = torch.stack([x['test_loss'] for x in outputs]).mean()
         tensorboard_logs = {'test_loss': test_loss_mean}
-        # Use self.log() for PyTorch Lightning 2.x compatibility
-        self.log('test_loss', test_loss_mean, on_step=False, on_epoch=True, sync_dist=True)
+        # Return dict with 'log' key, on_test_epoch_end will call log_dict()
         return {'test_loss': test_loss_mean, 'log': tensorboard_logs}
 
 
@@ -1104,42 +1102,112 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
 
         return {f'{mode}_loss': loss_value}
 
-    def on_validation_epoch_end(self):
+    def on_validation_epoch_end(self, sync_metrics: bool = False):
         """
         Called at the end of validation epoch.
-        Calls multi_validation_epoch_end for PyTorch Lightning 2.x compatibility.
+        Aligned with NeMo's implementation to properly return output_dict and handle logging.
         """
-        # Get outputs from validation_step
-        if hasattr(self, 'validation_step_outputs'):
-            if isinstance(self.validation_step_outputs, list):
-                if len(self.validation_step_outputs) > 0:
-                    # Single dataloader case
-                    outputs = self.validation_step_outputs
-                    self.multi_validation_epoch_end(outputs, dataloader_idx=0)
-                    self.validation_step_outputs.clear()
-            elif isinstance(self.validation_step_outputs, dict):
-                # Multiple dataloaders case
-                for dataloader_idx, outputs in self.validation_step_outputs.items():
-                    if len(outputs) > 0:
-                        self.multi_validation_epoch_end(outputs, dataloader_idx=dataloader_idx)
-                self.validation_step_outputs.clear()
+        # Case where we dont provide data loaders
+        if self.validation_step_outputs is not None and len(self.validation_step_outputs) == 0:
+            return {}
+        
+        # Case where we provide exactly 1 data loader
+        if isinstance(self.validation_step_outputs, list):
+            if len(self.validation_step_outputs) > 0:
+                # Single dataloader case
+                output_dict = self.multi_validation_epoch_end(self.validation_step_outputs, dataloader_idx=0)
+                
+                if output_dict is not None and 'log' in output_dict:
+                    self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
+                
+                self.validation_step_outputs.clear()  # free memory
+                return output_dict
+        elif isinstance(self.validation_step_outputs, dict):
+            # Multiple dataloaders case
+            output_dict = {'log': {}}
+            
+            for dataloader_idx, outputs in self.validation_step_outputs.items():
+                if len(outputs) > 0:
+                    dataloader_logs = self.multi_validation_epoch_end(outputs, dataloader_idx=dataloader_idx)
+                    
+                    # If result was not provided, generate empty dict
+                    dataloader_logs = dataloader_logs or {}
+                    
+                    # Perform `val_loss` resolution first (if provided outside logs)
+                    if 'val_loss' in dataloader_logs:
+                        if 'val_loss' not in output_dict:
+                            output_dict['val_loss'] = dataloader_logs['val_loss']
+                    
+                    # For every item in the result dictionary
+                    for k, v in dataloader_logs.items():
+                        if k == 'log':
+                            # Merge logs
+                            if isinstance(v, dict):
+                                output_dict['log'].update(v)
+                        else:
+                            # Store other values
+                            output_dict[k] = v
+                    
+                    self.validation_step_outputs[dataloader_idx].clear()  # free memory
+            
+            if 'log' in output_dict:
+                self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
+            
+            return output_dict
+        
+        return {}
 
     def on_test_epoch_end(self):
         """
         Called at the end of test epoch.
-        Calls multi_test_epoch_end for PyTorch Lightning 2.x compatibility.
+        Aligned with NeMo's implementation to properly return output_dict and handle logging.
         """
-        # Get outputs from test_step
-        if hasattr(self, 'test_step_outputs'):
-            if isinstance(self.test_step_outputs, list):
-                if len(self.test_step_outputs) > 0:
-                    # Single dataloader case
-                    outputs = self.test_step_outputs
-                    self.multi_test_epoch_end(outputs, dataloader_idx=0)
-                    self.test_step_outputs.clear()
-            elif isinstance(self.test_step_outputs, dict):
-                # Multiple dataloaders case
-                for dataloader_idx, outputs in self.test_step_outputs.items():
-                    if len(outputs) > 0:
-                        self.multi_test_epoch_end(outputs, dataloader_idx=dataloader_idx)
-                self.test_step_outputs.clear()
+        # Case where we dont provide data loaders
+        if self.test_step_outputs is not None and len(self.test_step_outputs) == 0:
+            return {}
+        
+        # Case where we provide exactly 1 data loader
+        if isinstance(self.test_step_outputs, list):
+            if len(self.test_step_outputs) > 0:
+                # Single dataloader case
+                output_dict = self.multi_test_epoch_end(self.test_step_outputs, dataloader_idx=0)
+                
+                if output_dict is not None and 'log' in output_dict:
+                    self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=True)
+                
+                self.test_step_outputs.clear()  # free memory
+                return output_dict
+        elif isinstance(self.test_step_outputs, dict):
+            # Multiple dataloaders case
+            output_dict = {'log': {}}
+            
+            for dataloader_idx, outputs in self.test_step_outputs.items():
+                if len(outputs) > 0:
+                    dataloader_logs = self.multi_test_epoch_end(outputs, dataloader_idx=dataloader_idx)
+                    
+                    # If result was not provided, generate empty dict
+                    dataloader_logs = dataloader_logs or {}
+                    
+                    # Perform `test_loss` resolution first (if provided outside logs)
+                    if 'test_loss' in dataloader_logs:
+                        if 'test_loss' not in output_dict:
+                            output_dict['test_loss'] = dataloader_logs['test_loss']
+                    
+                    # For every item in the result dictionary
+                    for k, v in dataloader_logs.items():
+                        if k == 'log':
+                            # Merge logs
+                            if isinstance(v, dict):
+                                output_dict['log'].update(v)
+                        else:
+                            # Store other values
+                            output_dict[k] = v
+                    
+                    self.test_step_outputs[dataloader_idx].clear()  # free memory
+            
+            if 'log' in output_dict:
+                self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=True)
+            
+            return output_dict
+        
+        return {}
