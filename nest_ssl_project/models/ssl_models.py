@@ -665,9 +665,6 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
         self.quantizer = self.from_config_dict(self.cfg.quantizer)
         self.mask_processor = self.from_config_dict(self.cfg.masking)
         self.encoder = self.from_config_dict(self.cfg.encoder)
-        # Verify sync_max_audio_length is set correctly
-        if hasattr(self.encoder, 'sync_max_audio_length'):
-            print(f"[Rank {self.global_rank}] Encoder sync_max_audio_length={self.encoder.sync_max_audio_length}", flush=True)
         self.decoder = self.from_config_dict(self.cfg.decoder)
         self.loss = self.from_config_dict(self.cfg.loss)
 
