@@ -1118,21 +1118,8 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 # Single dataloader case: list of dicts
                 output_dict = self.multi_validation_epoch_end(self.validation_step_outputs, dataloader_idx=0)
                 
-                if output_dict is not None and 'val_loss' in output_dict:
-                    self.log(
-                        'val_loss',
-                        output_dict['val_loss'],
-                        on_step=False,
-                        on_epoch=True,
-                        prog_bar=True,
-                        logger=True,
-                        sync_dist=sync_metrics,
-                    )
                 if output_dict is not None and 'log' in output_dict:
-                    output_log = output_dict.pop('log')
-                    output_log.pop('val_loss', None)
-                    if len(output_log) > 0:
-                        self.log_dict(output_log, on_epoch=True, sync_dist=sync_metrics)
+                    self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
                 
                 self.validation_step_outputs.clear()  # free memory
                 return output_dict
@@ -1165,22 +1152,8 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                         
                         self.validation_step_outputs[dataloader_idx].clear()  # free memory
                 
-                if 'val_loss' in output_dict:
-                    self.log(
-                        'val_loss',
-                        output_dict['val_loss'],
-                        on_step=False,
-                        on_epoch=True,
-                        prog_bar=True,
-                        logger=True,
-                        sync_dist=sync_metrics,
-                    )
-
                 if 'log' in output_dict:
-                    output_log = output_dict.pop('log')
-                    output_log.pop('val_loss', None)
-                    if len(output_log) > 0:
-                        self.log_dict(output_log, on_epoch=True, sync_dist=sync_metrics)
+                    self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
                 
                 return output_dict
         
