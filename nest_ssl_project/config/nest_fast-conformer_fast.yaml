@@ -18,8 +18,8 @@ model:
     sample_rate: ${model.sample_rate}
     batch_size: 8  # INCREASED from 2 for better GPU utilization
     shuffle: true
-    num_workers: 0  # Windows: keep 0, Linux/Mac: change to 4-8
-    pin_memory: false # set to false to avoid hanging on Windows/DDP (pin_memory can cause deadlock)
+    num_workers: 8  # Linux: use 8-16 for better IO performance. Windows: set to 0
+    pin_memory: true # Enable pin_memory when num_workers > 0 for faster GPU transfer
     use_start_end_token: false
     trim_silence: false
     max_duration: 60.0
@@ -54,8 +54,8 @@ model:
     sample_rate: ${model.sample_rate}
     batch_size: 8  # INCREASED from 2
     shuffle: false
-    num_workers: 0  # Windows: keep 0, Linux/Mac: change to 2-4
-    pin_memory: false # set to false to avoid hanging on Windows/DDP (pin_memory can cause deadlock)
+    num_workers: 8  # Linux: use 8-16 for better IO performance. Windows: set to 0
+    pin_memory: true # Enable pin_memory when num_workers > 0 for faster GPU transfer
     use_start_end_token: false
     max_duration: 60.0
     min_duration: 1.0

@@ -911,14 +911,21 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         else:
             collate_fn = None
 
+        num_workers = config.get('num_workers', 0)
+        pin_memory = config.get('pin_memory', False)
+        # Fix: pin_memory should be False when num_workers=0 to avoid hanging
+        # In Linux multi-process environment, pin_memory with num_workers=0 can cause deadlock
+        if num_workers == 0:
+            pin_memory = False
+        
         return torch.utils.data.DataLoader(
             dataset=dataset,
             batch_size=config['batch_size'],
             collate_fn=collate_fn,
             drop_last=config.get('drop_last', False),
             shuffle=shuffle,
-            num_workers=config.get('num_workers', 0),
-            pin_memory=config.get('pin_memory', False),
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
 
     @property
