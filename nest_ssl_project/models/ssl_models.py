@@ -280,71 +280,33 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
             is_tarred_like = is_iterable_dataset and not is_concat_dataset  # TarredDataset is IterableDataset but not ConcatDataset
             
             if self.world_size > 1 and torch.distributed.is_initialized():
-                # Check dataset length consistency
-                if is_concat_dataset or is_tarred_like:
-                    # For ConcatDataset and TarredDataset, different ranks SHOULD have different lengths (by design)
-                    logging.info(
-                        f"Rank {self.global_rank}: Using {'ConcatDataset' if is_concat_dataset else 'TarredDataset'}, "
-                        f"dataset_len={dataset_len} (different ranks may have different lengths, this is expected)"
-                    )
-                else:
+                # Check dataset length consistency for regular datasets
+                if not (is_concat_dataset or is_tarred_like):
                     # For regular datasets, all ranks should have the same length
                     dataset_len_tensor = torch.tensor(dataset_len, dtype=torch.long, device='cuda' if torch.cuda.is_available() else 'cpu')
                     torch.distributed.all_reduce(dataset_len_tensor, op=torch.distributed.ReduceOp.MAX)
                     max_dataset_len = dataset_len_tensor.item()
                     if dataset_len != max_dataset_len:
                         logging.error(
-                            f"CRITICAL: Rank {self.global_rank} has dataset_len={dataset_len}, but max across ranks={max_dataset_len}. "
+                            f"Rank {self.global_rank} has dataset_len={dataset_len}, but max across ranks={max_dataset_len}. "
                             "This will cause DDP synchronization issues! All ranks must see the same dataset."
-                        )
-                    else:
-                        logging.info(
-                            f"Verified: All ranks have same dataset_len={dataset_len} (rank {self.global_rank})"
                         )
             
             # Calculate batches_per_rank based on dataset type
             if is_concat_dataset or is_tarred_like:
-                # ConcatDataset and TarredDataset already split data by rank, so dataset_len is per-rank
                 batches_per_rank = dataset_len // batch_size
             else:
-                # Regular dataset: all ranks see same dataset, divide by world_size
                 batches_per_rank = (dataset_len // self.world_size) // batch_size
-            total_batches = batches_per_rank * self.world_size
             
-            if self.world_size > 1:
-                # Get actual drop_last from dataloader
-                drop_last_actual = getattr(self._train_dl, 'drop_last', False)
-                dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
-                logging.info(
-                    f"DDP Training: dataset_len={dataset_len}, batch_size={batch_size}, "
-                    f"world_size={self.world_size}, batches_per_rank={batches_per_rank}, "
-                    f"total_batches={total_batches}, drop_last={drop_last_actual}, "
-                    f"dataset_type={dataset_type}, global_rank={self.global_rank}"
-                )
-                
-                # Ensure limit_train_batches is set correctly for DDP
-                if self._trainer is not None:
-                    original_limit = self._trainer.limit_train_batches
-                    if isinstance(self._trainer.limit_train_batches, float):
-                        # Convert float to int based on batches per rank
-                        self._trainer.limit_train_batches = int(
-                            self._trainer.limit_train_batches * batches_per_rank
-                        )
-                        logging.info(
-                            f"Adjusted limit_train_batches from {original_limit} to {self._trainer.limit_train_batches} "
-                            f"(batches_per_rank={batches_per_rank})"
-                        )
-                    elif isinstance(self._trainer.limit_train_batches, int):
-                        # CRITICAL: Force limit to batches_per_rank to prevent sync issues
-                        if self._trainer.limit_train_batches > batches_per_rank:
-                            logging.warning(
-                                f"limit_train_batches ({self._trainer.limit_train_batches}) > batches_per_rank "
-                                f"({batches_per_rank}), forcing to batches_per_rank to prevent sync issues"
-                            )
-                            self._trainer.limit_train_batches = batches_per_rank
-                        logging.info(
-                            f"limit_train_batches={self._trainer.limit_train_batches}, batches_per_rank={batches_per_rank}"
-                        )
+            # Ensure limit_train_batches is set correctly for DDP
+            if self.world_size > 1 and self._trainer is not None:
+                if isinstance(self._trainer.limit_train_batches, float):
+                    self._trainer.limit_train_batches = int(
+                        self._trainer.limit_train_batches * batches_per_rank
+                    )
+                elif isinstance(self._trainer.limit_train_batches, int):
+                    if self._trainer.limit_train_batches > batches_per_rank:
+                        self._trainer.limit_train_batches = batches_per_rank
                 elif self._trainer is None:
                     logging.warning(
                         "Model Trainer was not set before constructing the dataset, incorrect number of "
@@ -743,17 +705,6 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
         self.quantizer = self.from_config_dict(self.cfg.quantizer)
         self.mask_processor = self.from_config_dict(self.cfg.masking)
         self.encoder = self.from_config_dict(self.cfg.encoder)
-        # Align with NeMo original: encoder is created without modifying sync_max_audio_length
-        # If sync_max_audio_length needs to be disabled, it should be set in config file
-        # Check encoder type for debugging
-        encoder_type = type(self.encoder).__name__
-        encoder_module = type(self.encoder).__module__
-        has_sync_max = hasattr(self.encoder, 'sync_max_audio_length')
-        sync_max_value = getattr(self.encoder, 'sync_max_audio_length', None)
-        logging.info(
-            f"Rank {self.global_rank}: encoder type={encoder_type}, module={encoder_module}, "
-            f"has_sync_max_audio_length={has_sync_max}, sync_max_audio_length={sync_max_value}"
-        )
         self.decoder = self.from_config_dict(self.cfg.decoder)
         self.loss = self.from_config_dict(self.cfg.loss)
 
@@ -1002,32 +953,11 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         if num_workers == 0:
             pin_memory = False
         
-        # CRITICAL: Force drop_last=True for DDP training to prevent hanging
-        # Even if config has drop_last=True, we need to ensure it's enforced for multi-GPU training
-        # This is especially critical with 4+ GPUs where data distribution is more uneven
-        config_drop_last = config.get('drop_last', False)
-        logging.info(
-            f"Config drop_last value: {config_drop_last} (type: {type(config_drop_last)}, "
-            f"config keys: {list(config.keys())[:10]}...)"
-        )
-        
-        drop_last = config_drop_last
+        # Force drop_last=True for DDP training to prevent hanging
+        drop_last = config.get('drop_last', False)
         if self.world_size > 1:
             # In DDP mode, always drop last batch to ensure all ranks process same number of batches
-            # This prevents deadlock when different ranks have different batch counts
             drop_last = True
-            logging.info(
-                f"DDP Training: drop_last forced to True (config had drop_last={config_drop_last}, "
-                f"world_size={self.world_size}, global_rank={self.global_rank})"
-            )
-        
-        # For IterableDataset, drop_last may not work as expected, so we rely on training_step skip mechanism
-        is_iterable = isinstance(dataset, torch.utils.data.IterableDataset)
-        if is_iterable and self.world_size > 1:
-            logging.info(
-                f"Using IterableDataset with DDP: drop_last={drop_last} may not fully prevent sync issues, "
-                "relying on training_step skip mechanism"
-            )
         
         dataloader = torch.utils.data.DataLoader(
             dataset=dataset,
@@ -1038,38 +968,6 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        
-        # Verify drop_last was set correctly and log dataset info
-        if self.world_size > 1:
-            if dataloader.drop_last != drop_last:
-                logging.error(
-                    f"CRITICAL: DataLoader.drop_last mismatch! Expected {drop_last}, got {dataloader.drop_last}. "
-                    "This may cause DDP synchronization issues!"
-                )
-            else:
-                logging.info(f"Verified: DataLoader.drop_last={dataloader.drop_last} (world_size={self.world_size})")
-            
-            # CRITICAL: Log dataset info immediately after dataloader creation
-            # This ensures we see dataset info even if setup_training_data is called later
-            if hasattr(dataloader, 'dataset'):
-                dataset_len = len(dataloader.dataset)
-                batch_size = config['batch_size']
-                from common.data.dataset import ConcatDataset
-                is_concat_dataset = isinstance(dataloader.dataset, ConcatDataset)
-                is_iterable_dataset = isinstance(dataloader.dataset, torch.utils.data.IterableDataset)
-                is_tarred_like = is_iterable_dataset and not is_concat_dataset
-                
-                if is_concat_dataset or is_tarred_like:
-                    batches_per_rank = dataset_len // batch_size
-                else:
-                    batches_per_rank = (dataset_len // self.world_size) // batch_size
-                
-                dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
-                logging.info(
-                    f"[DATALOADER CREATED] Rank {self.global_rank}: dataset_len={dataset_len}, batch_size={batch_size}, "
-                    f"batches_per_rank={batches_per_rank}, drop_last={dataloader.drop_last}, "
-                    f"dataset_type={dataset_type}, world_size={self.world_size}"
-                )
         
         return dataloader
 
@@ -1127,20 +1025,6 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         processed_noisy_input_signal_length=None,
         apply_mask=False,
     ):
-        # CRITICAL: Add logging at the start of forward to catch hanging
-        # Note: We can't use batch_idx here, so we'll use a simple counter or device info
-        if hasattr(self, '_forward_call_count'):
-            self._forward_call_count += 1
-        else:
-            self._forward_call_count = 1
-        
-        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-            logging.info(
-                f"[FORWARD START] Rank {self.global_rank}: call_count={self._forward_call_count}, "
-                f"has_input={input_signal is not None}, has_processed={processed_signal is not None}, "
-                f"apply_mask={apply_mask}"
-            )
-        
         has_input_signal = input_signal is not None and input_signal_length is not None
         has_processed_signal = processed_signal is not None and processed_signal_length is not None
         if (has_input_signal ^ has_processed_signal) == False:
@@ -1149,24 +1033,11 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_signal`` and ``processed_signal_len`` arguments."
             )
         
-        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-            logging.info(f"[FORWARD] Rank {self.global_rank}: Before preprocessor, has_processed={has_processed_signal}")
-        
         if not has_processed_signal:
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: Calling preprocessor, "
-                    f"input_signal.shape={input_signal.shape if input_signal is not None else 'N/A'}"
-                )
             processed_signal, processed_signal_length = self.preprocessor(
                 input_signal=input_signal,
                 length=input_signal_length,
             )
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: After preprocessor, "
-                    f"processed_signal.shape={processed_signal.shape if processed_signal is not None else 'N/A'}"
-                )
 
         ### Following code snipet is not used but kept for future reference
         #
@@ -1193,83 +1064,28 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 " with ``processed_noisy_input_signal`` and ``processed_noisy_input_signal_len`` arguments."
             )
         if not has_processed_noisy_input_signal:
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: Calling preprocessor for noisy_input, "
-                    f"noisy_input_signal.shape={noisy_input_signal.shape if noisy_input_signal is not None else 'N/A'}"
-                )
             processed_noisy_input_signal, processed_noisy_input_signal_length = self.preprocessor(
                 input_signal=noisy_input_signal,
                 length=noisy_input_signal_length,
             )
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: After noisy preprocessor, "
-                    f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape if processed_noisy_input_signal is not None else 'N/A'}"
-                )
-
-        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-            logging.info(
-                f"[FORWARD] Rank {self.global_rank}: Checking pre_encoder, "
-                f"pre_encoder={self.pre_encoder is not None}"
-            )
 
         if self.pre_encoder is not None:
             # mask after convolutional sub-sampling
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(f"[FORWARD] Rank {self.global_rank}: Calling pre_encoder.pre_encode...")
             feats, _ = self.pre_encoder.pre_encode(x=processed_signal, lengths=processed_signal_length)
-            
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(f"[FORWARD] Rank {self.global_rank}: Calling quantizer...")
             _, tokens = self.quantizer(input_signal=feats.transpose(1, 2))
-
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(f"[FORWARD] Rank {self.global_rank}: Setting masking enabled={apply_mask}")
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
             
-            # CRITICAL: Always log sync_max_audio_length before encoder call to debug hanging
-            # Check both direct attribute and wrapped encoder
-            sync_max = getattr(self.encoder, 'sync_max_audio_length', None)
-            if sync_max is None and hasattr(self.encoder, 'module'):
-                sync_max = getattr(self.encoder.module, 'sync_max_audio_length', None)
-            if sync_max is None:
-                sync_max = 'NOT_SET'
-            
-            encoder_type = type(self.encoder).__name__
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: Calling encoder (pre_encoder path, type={encoder_type}), "
-                    f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape}, "
-                    f"length.shape={processed_noisy_input_signal_length.shape if processed_noisy_input_signal_length is not None else 'N/A'}, "
-                    f"encoder.sync_max_audio_length={sync_max}"
-                )
-            elif sync_max is True:  # CRITICAL: Always log if sync_max_audio_length is True (potential deadlock)
-                logging.error(
-                    f"[FORWARD] Rank {self.global_rank}: CRITICAL - encoder.sync_max_audio_length={sync_max} "
-                    f"may cause DDP deadlock! (call_count={self._forward_call_count}, encoder_type={encoder_type})"
-                )
             try:
                 encoded, encoded_len = self.encoder(
                     audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
                 )
-                if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                    logging.info(
-                        f"[FORWARD] Rank {self.global_rank}: Encoder returned (pre_encoder path), "
-                        f"encoded.shape={encoded.shape if encoded is not None else 'N/A'}, "
-                        f"encoded_len.shape={encoded_len.shape if encoded_len is not None else 'N/A'}"
-                    )
             except Exception as e:
-                logging.error(f"[FORWARD] Rank {self.global_rank}: Encoder call failed (pre_encoder path): {e}")
+                logging.error(f"Encoder call failed (pre_encoder path): {e}")
                 raise
             masks = self.pre_encoder.get_current_mask()
         else:
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(f"[FORWARD] Rank {self.global_rank}: No pre_encoder, calling quantizer...")
             _, tokens = self.quantizer(input_signal=processed_signal)
             if apply_mask:
-                if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                    logging.info(f"[FORWARD] Rank {self.global_rank}: Applying mask...")
                 masked_signal, masks = self.mask_processor(
                     input_feats=processed_noisy_input_signal, input_lengths=processed_noisy_input_signal_length
                 )
@@ -1277,183 +1093,45 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
                 masked_signal = processed_noisy_input_signal
                 masks = torch.zeros_like(processed_noisy_input_signal)
             
-            # CRITICAL: Always log sync_max_audio_length before encoder call to debug hanging
-            sync_max = getattr(self.encoder, 'sync_max_audio_length', 'NOT_SET')
-            if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: Calling encoder, "
-                    f"masked_signal.shape={masked_signal.shape}, "
-                    f"length.shape={processed_noisy_input_signal_length.shape if processed_noisy_input_signal_length is not None else 'N/A'}, "
-                    f"encoder.sync_max_audio_length={sync_max}"
-                )
-            elif sync_max is True:  # CRITICAL: Always log if sync_max_audio_length is True (potential deadlock)
-                logging.error(
-                    f"[FORWARD] Rank {self.global_rank}: CRITICAL - encoder.sync_max_audio_length={sync_max} "
-                    f"may cause DDP deadlock! (call_count={self._forward_call_count})"
-                )
             try:
                 encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
-                if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-                    logging.info(
-                        f"[FORWARD] Rank {self.global_rank}: Encoder returned, "
-                        f"encoded.shape={encoded.shape if encoded is not None else 'N/A'}, "
-                        f"encoded_len.shape={encoded_len.shape if encoded_len is not None else 'N/A'}"
-                    )
             except Exception as e:
-                logging.error(f"[FORWARD] Rank {self.global_rank}: Encoder call failed: {e}")
+                logging.error(f"Encoder call failed: {e}")
                 raise
 
-        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-            logging.info(f"[FORWARD] Rank {self.global_rank}: Calling decoder...")
         log_probs = self.decoder(encoder_output=encoded)
-
-        if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
-            logging.info(
-                f"[FORWARD END] Rank {self.global_rank}: call_count={self._forward_call_count}, "
-                f"log_probs.shape={log_probs.shape if log_probs is not None else 'N/A'}"
-            )
 
         return log_probs, encoded_len, masks, tokens
 
     def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
-        # CRITICAL: Log at the very beginning of training_step to catch hanging issues
-        # Log EVERY batch for first 100 batches, then every 10 batches
-        if batch_idx < 100 or batch_idx % 10 == 0:
-            logging.info(
-                f"[TRAINING_STEP START] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                f"world_size={self.world_size}, device={self.device}"
-            )
-        
-        # CRITICAL: Skip batch if we've exceeded the expected number of batches per rank
+        # Skip batch if we've exceeded the expected number of batches per rank
         # This prevents hanging when different ranks have different batch counts
-        if batch_idx < 100 or batch_idx % 10 == 0:
-            logging.info(
-                f"[CHECK DDP SYNC] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                f"world_size={self.world_size}, trainer={self._trainer is not None}"
-            )
-        
         if self.world_size > 1 and self._trainer is not None:
-            if batch_idx < 100 or batch_idx % 10 == 0:
-                logging.info(
-                    f"[CALC BATCHES] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                    f"has_dataset={hasattr(self._train_dl, 'dataset')}"
-                )
-            
             # Calculate expected batches per rank
             if hasattr(self._train_dl, 'dataset'):
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Importing ConcatDataset...")
-                
                 from common.data.dataset import ConcatDataset
-                
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Calling len(dataset)...")
                 
                 try:
                     dataset_len = len(self._train_dl.dataset)
-                    if batch_idx < 100 or batch_idx % 10 == 0:
-                        logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Got dataset_len={dataset_len}")
                 except Exception as e:
-                    logging.error(f"[CALC BATCHES] Rank {self.global_rank}: Error getting dataset_len: {e}")
+                    logging.error(f"Error getting dataset_len: {e}")
                     raise
                 
                 batch_size = self._train_dl.batch_size
-                drop_last_actual = getattr(self._train_dl, 'drop_last', False)
-                
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(f"[CALC BATCHES] Rank {self.global_rank}: Checking dataset types...")
-                
                 is_concat_dataset = isinstance(self._train_dl.dataset, ConcatDataset)
                 is_iterable_dataset = isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
                 is_tarred_like = is_iterable_dataset and not is_concat_dataset
                 
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(
-                        f"[CALC BATCHES] Rank {self.global_rank}: dataset_len={dataset_len}, "
-                        f"batch_size={batch_size}, is_concat={is_concat_dataset}, is_tarred={is_tarred_like}"
-                    )
-                
                 # Calculate expected batches per rank based on dataset type
-                # ConcatDataset and TarredDataset: dataset_len is already per-rank
-                # Regular dataset: divide by world_size
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(
-                        f"[CALC BATCHES] Rank {self.global_rank}: Calculating expected_batches_per_rank, "
-                        f"is_concat={is_concat_dataset}, is_tarred={is_tarred_like}, world_size={self.world_size}"
-                    )
-                
                 if is_concat_dataset or is_tarred_like:
                     expected_batches_per_rank = dataset_len // batch_size
-                    if batch_idx < 100 or batch_idx % 10 == 0:
-                        logging.info(
-                            f"[CALC BATCHES] Rank {self.global_rank}: Concat/Tarred: "
-                            f"expected_batches_per_rank={expected_batches_per_rank} (dataset_len={dataset_len} // batch_size={batch_size})"
-                        )
                 else:
                     expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
-                    if batch_idx < 100 or batch_idx % 10 == 0:
-                        logging.info(
-                            f"[CALC BATCHES] Rank {self.global_rank}: Regular: "
-                            f"expected_batches_per_rank={expected_batches_per_rank} "
-                            f"((dataset_len={dataset_len} // world_size={self.world_size}) // batch_size={batch_size})"
-                        )
-                
-                # Log every 10 batches for debugging, and ALWAYS log near expected max
-                # CRITICAL: Log more frequently near the limit to catch sync issues
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(
-                        f"[CALC BATCHES] Rank {self.global_rank}: Calculating log_interval, "
-                        f"batch_idx={batch_idx}, expected_batches_per_rank={expected_batches_per_rank}"
-                    )
-                
-                log_interval = 10 if batch_idx < expected_batches_per_rank - 20 else 1
-                
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(
-                        f"[CALC BATCHES] Rank {self.global_rank}: log_interval={log_interval}, "
-                        f"should_log={batch_idx % log_interval == 0 or batch_idx >= expected_batches_per_rank - 5}"
-                    )
-                
-                if batch_idx % log_interval == 0 or batch_idx >= expected_batches_per_rank - 5:
-                    dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
-                    logging.info(
-                        f"[TRAINING_STEP] Rank {self.global_rank}: batch_idx={batch_idx}, expected_max={expected_batches_per_rank - 1}, "
-                        f"dataset_len={dataset_len}, batch_size={batch_size}, drop_last={drop_last_actual}, "
-                        f"dataset_type={dataset_type}, remaining={expected_batches_per_rank - batch_idx - 1}"
-                    )
                 
                 # Skip if batch_idx exceeds expected batches (safety check)
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(
-                        f"[CALC BATCHES] Rank {self.global_rank}: Checking skip condition, "
-                        f"batch_idx={batch_idx}, expected_batches_per_rank={expected_batches_per_rank}, "
-                        f"should_skip={batch_idx >= expected_batches_per_rank}"
-                    )
-                
                 if batch_idx >= expected_batches_per_rank:
-                    dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
-                    logging.error(
-                        f"[SKIP BATCH] Rank {self.global_rank}: batch_idx={batch_idx} >= expected_max={expected_batches_per_rank - 1}, "
-                        f"drop_last={drop_last_actual}, dataset_type={dataset_type}, dataset_len={dataset_len}, "
-                        f"batch_size={batch_size}, world_size={self.world_size}. "
-                        "Skipping to prevent DDP sync issues!"
-                    )
                     # Return dummy loss dict instead of None to prevent PyTorch Lightning errors
                     return {'loss': torch.tensor(0.0, device=self.device), 'log': {}}
-                
-                if batch_idx < 100 or batch_idx % 10 == 0:
-                    logging.info(
-                        f"[CALC BATCHES] Rank {self.global_rank}: Finished batch calculation checks, "
-                        f"proceeding to forward pass"
-                    )
-        
-        # Log before forward pass to catch hanging in forward
-        # CRITICAL: Use same condition as other logs (first 100 batches or every 10)
-        if batch_idx < 100 or batch_idx % 10 == 0:
-            logging.info(
-                f"[BEFORE FORWARD] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                f"batch.audio.shape={batch.audio.shape if hasattr(batch, 'audio') else 'N/A'}"
-            )
         
         log_probs, encoded_len, masks, tokens = self.forward(
             input_signal=batch.audio,
@@ -1465,22 +1143,7 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             apply_mask=True,
         )
 
-        # Log before loss calculation
-        if batch_idx < 100 or batch_idx % 10 == 0:
-            logging.info(
-                f"[BEFORE LOSS] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                f"log_probs.shape={log_probs.shape if log_probs is not None else 'N/A'}, "
-                f"tokens.shape={tokens.shape if tokens is not None else 'N/A'}"
-            )
-        
         loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
-        
-        # Log after loss calculation
-        if batch_idx < 100 or batch_idx % 10 == 0:
-            logging.info(
-                f"[AFTER LOSS] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                f"loss_value={loss_value.item() if hasattr(loss_value, 'item') else loss_value}"
-            )
 
         # Align with NeMo original: return dict format for compatibility
         tensorboard_logs = {
@@ -1489,16 +1152,7 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             'train_loss': loss_value,
         }
 
-        result = {'loss': loss_value, 'log': tensorboard_logs}
-        
-        # Log at the end of training_step
-        if batch_idx < 100 or batch_idx % 10 == 0:
-            logging.info(
-                f"[TRAINING_STEP END] Rank {self.global_rank}: batch_idx={batch_idx}, "
-                f"loss={loss_value.item() if hasattr(loss_value, 'item') else loss_value}"
-            )
-        
-        return result
+        return {'loss': loss_value, 'log': tensorboard_logs}
 
     def inference_pass(
         self,
