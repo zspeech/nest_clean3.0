@@ -268,18 +268,58 @@ class SpeechEncDecSelfSupervisedModel(ModelPT, ASRModuleMixin, AccessMixin):
         if self._train_dl is not None and hasattr(self._train_dl, 'dataset'):
             dataset_len = len(self._train_dl.dataset)
             batch_size = train_data_config['batch_size']
-            # With drop_last=True, each rank processes floor((dataset_len / world_size) / batch_size) batches
-            batches_per_rank = (dataset_len // self.world_size) // batch_size
+            
+            # CRITICAL: Handle dataset length calculation based on dataset type
+            # Dataset types and their per-rank behavior:
+            # 1. Regular Dataset: All ranks see SAME dataset, DistributedSampler handles splitting
+            # 2. ConcatDataset: Each rank sees DIFFERENT dataset (already split by ConcatDataset)
+            # 3. TarredDataset (IterableDataset): Each rank sees DIFFERENT shards
+            from common.data.dataset import ConcatDataset
+            is_concat_dataset = isinstance(self._train_dl.dataset, ConcatDataset)
+            is_iterable_dataset = isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
+            is_tarred_like = is_iterable_dataset and not is_concat_dataset  # TarredDataset is IterableDataset but not ConcatDataset
+            
+            if self.world_size > 1 and torch.distributed.is_initialized():
+                # Check dataset length consistency
+                if is_concat_dataset or is_tarred_like:
+                    # For ConcatDataset and TarredDataset, different ranks SHOULD have different lengths (by design)
+                    logging.info(
+                        f"Rank {self.global_rank}: Using {'ConcatDataset' if is_concat_dataset else 'TarredDataset'}, "
+                        f"dataset_len={dataset_len} (different ranks may have different lengths, this is expected)"
+                    )
+                else:
+                    # For regular datasets, all ranks should have the same length
+                    dataset_len_tensor = torch.tensor(dataset_len, dtype=torch.long, device='cuda' if torch.cuda.is_available() else 'cpu')
+                    torch.distributed.all_reduce(dataset_len_tensor, op=torch.distributed.ReduceOp.MAX)
+                    max_dataset_len = dataset_len_tensor.item()
+                    if dataset_len != max_dataset_len:
+                        logging.error(
+                            f"CRITICAL: Rank {self.global_rank} has dataset_len={dataset_len}, but max across ranks={max_dataset_len}. "
+                            "This will cause DDP synchronization issues! All ranks must see the same dataset."
+                        )
+                    else:
+                        logging.info(
+                            f"Verified: All ranks have same dataset_len={dataset_len} (rank {self.global_rank})"
+                        )
+            
+            # Calculate batches_per_rank based on dataset type
+            if is_concat_dataset or is_tarred_like:
+                # ConcatDataset and TarredDataset already split data by rank, so dataset_len is per-rank
+                batches_per_rank = dataset_len // batch_size
+            else:
+                # Regular dataset: all ranks see same dataset, divide by world_size
+                batches_per_rank = (dataset_len // self.world_size) // batch_size
             total_batches = batches_per_rank * self.world_size
             
             if self.world_size > 1:
                 # Get actual drop_last from dataloader
                 drop_last_actual = getattr(self._train_dl, 'drop_last', False)
+                dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
                 logging.info(
                     f"DDP Training: dataset_len={dataset_len}, batch_size={batch_size}, "
                     f"world_size={self.world_size}, batches_per_rank={batches_per_rank}, "
                     f"total_batches={total_batches}, drop_last={drop_last_actual}, "
-                    f"global_rank={self.global_rank}"
+                    f"dataset_type={dataset_type}, global_rank={self.global_rank}"
                 )
                 
                 # Ensure limit_train_batches is set correctly for DDP
@@ -1133,23 +1173,37 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
         if self.world_size > 1 and self._trainer is not None:
             # Calculate expected batches per rank
             if hasattr(self._train_dl, 'dataset'):
+                from common.data.dataset import ConcatDataset
                 dataset_len = len(self._train_dl.dataset)
                 batch_size = self._train_dl.batch_size
                 drop_last_actual = getattr(self._train_dl, 'drop_last', False)
-                expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
+                is_concat_dataset = isinstance(self._train_dl.dataset, ConcatDataset)
+                is_iterable_dataset = isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
+                is_tarred_like = is_iterable_dataset and not is_concat_dataset
+                
+                # Calculate expected batches per rank based on dataset type
+                # ConcatDataset and TarredDataset: dataset_len is already per-rank
+                # Regular dataset: divide by world_size
+                if is_concat_dataset or is_tarred_like:
+                    expected_batches_per_rank = dataset_len // batch_size
+                else:
+                    expected_batches_per_rank = (dataset_len // self.world_size) // batch_size
                 
                 # Log every 10 batches for debugging
                 if batch_idx % 10 == 0 or batch_idx >= expected_batches_per_rank - 1:
+                    dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
                     logging.info(
                         f"Rank {self.global_rank}: batch_idx={batch_idx}, expected_max={expected_batches_per_rank - 1}, "
-                        f"dataset_len={dataset_len}, batch_size={batch_size}, drop_last={drop_last_actual}"
+                        f"dataset_len={dataset_len}, batch_size={batch_size}, drop_last={drop_last_actual}, "
+                        f"dataset_type={dataset_type}"
                     )
                 
                 # Skip if batch_idx exceeds expected batches (safety check)
                 if batch_idx >= expected_batches_per_rank:
+                    dataset_type = 'ConcatDataset' if is_concat_dataset else ('TarredDataset' if is_tarred_like else 'RegularDataset')
                     logging.warning(
                         f"Rank {self.global_rank}: Skipping batch {batch_idx} (expected max: {expected_batches_per_rank - 1}, "
-                        f"drop_last={drop_last_actual})"
+                        f"drop_last={drop_last_actual}, dataset_type={dataset_type})"
                     )
                     return None  # Skip this batch to prevent DDP sync issues
         

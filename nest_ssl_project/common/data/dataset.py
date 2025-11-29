@@ -69,11 +69,13 @@ class ConcatDataset(IterableDataset):
         self.np_rng = np.random.RandomState(seed)
         
         # Calculate total length
+        # CRITICAL: Align with NeMo original - for map-style datasets, divide by world_size
+        # This ensures each rank sees a portion of the dataset, ConcatDataset handles the splitting
         if self.kind == 'map':
-            self.length = sum(len(d) for d in datasets) * sampling_scale
+            self.length = sum(len(d) // world_size for d in datasets) * sampling_scale
         else:
-            # For iterable datasets, length is approximate
-            self.length = 0
+            # For iterable datasets, length is approximate (not divided by world_size)
+            self.length = sum(len(d) for d in datasets) * sampling_scale if datasets else 0
     
     def __iter__(self) -> Iterator:
         """Iterate over datasets based on sampling technique."""
@@ -112,9 +114,28 @@ class ConcatDataset(IterableDataset):
                             exhausted[idx] = True
         else:
             # For map-style datasets
+            # CRITICAL: Align with NeMo original - split data by global_rank and world_size
+            # This ensures each rank only sees its portion of the data
+            import torch.utils.data as pt_data
+            worker_info = pt_data.get_worker_info()
+            if worker_info is None:
+                wid = 0
+                wnum = 1
+            else:
+                wid = worker_info.id
+                wnum = worker_info.num_workers
+            
             all_indices = []
             for dataset_idx, dataset in enumerate(self.datasets):
-                indices = list(range(len(dataset)))
+                # Split dataset by rank (same as NeMo original)
+                start_idx = (len(dataset) // self.world_size) * self.global_rank
+                end_idx = start_idx + (len(dataset) // self.world_size)
+                if self.global_rank == self.world_size - 1:
+                    # Last rank gets remaining samples
+                    end_idx = len(dataset)
+                
+                # Further split by worker
+                indices = list(range(start_idx + wid, end_idx, wnum))
                 if self.shuffle:
                     self.np_rng.shuffle(indices)
                 all_indices.extend([(dataset_idx, idx) for idx in indices])
