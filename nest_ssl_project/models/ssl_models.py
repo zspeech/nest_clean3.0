@@ -746,6 +746,15 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
         # Fix DDP deadlock: disable sync_max_audio_length to prevent hanging in multi-GPU training
         # When sync_max_audio_length=True, encoder performs all_reduce which can cause deadlock
         # if ranks are not synchronized (e.g., different batch sizes, early stopping, etc.)
+        # CRITICAL: Check encoder type and attributes
+        encoder_type = type(self.encoder).__name__
+        encoder_module = type(self.encoder).__module__
+        logging.info(
+            f"Rank {self.global_rank}: encoder type={encoder_type}, module={encoder_module}, "
+            f"has_sync_max={hasattr(self.encoder, 'sync_max_audio_length')}, "
+            f"encoder_attrs={[attr for attr in dir(self.encoder) if 'sync' in attr.lower() or 'max' in attr.lower()][:10]}"
+        )
+        
         if hasattr(self.encoder, 'sync_max_audio_length'):
             original_sync_max = self.encoder.sync_max_audio_length
             self.encoder.sync_max_audio_length = False
@@ -754,10 +763,25 @@ class EncDecMaskedTokenPredModel(SpeechEncDecSelfSupervisedModel):
                 f"to prevent DDP deadlock (world_size={self.world_size})"
             )
         else:
-            logging.warning(
-                f"Rank {self.global_rank}: encoder does not have sync_max_audio_length attribute, "
-                "cannot disable DDP synchronization"
-            )
+            # Try to find the actual encoder module if it's wrapped
+            actual_encoder = self.encoder
+            if hasattr(self.encoder, 'module'):
+                actual_encoder = self.encoder.module
+            elif hasattr(self.encoder, 'encoder'):
+                actual_encoder = self.encoder.encoder
+            
+            if hasattr(actual_encoder, 'sync_max_audio_length'):
+                original_sync_max = actual_encoder.sync_max_audio_length
+                actual_encoder.sync_max_audio_length = False
+                logging.info(
+                    f"Rank {self.global_rank}: Found sync_max_audio_length in wrapped encoder, "
+                    f"set from {original_sync_max} to False"
+                )
+            else:
+                logging.warning(
+                    f"Rank {self.global_rank}: encoder (type={encoder_type}) does not have sync_max_audio_length attribute, "
+                    "cannot disable DDP synchronization. This may cause deadlock if encoder uses all_reduce!"
+                )
         self.decoder = self.from_config_dict(self.cfg.decoder)
         self.loss = self.from_config_dict(self.cfg.loss)
 
@@ -1233,10 +1257,17 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
             
             # CRITICAL: Always log sync_max_audio_length before encoder call to debug hanging
-            sync_max = getattr(self.encoder, 'sync_max_audio_length', 'NOT_SET')
+            # Check both direct attribute and wrapped encoder
+            sync_max = getattr(self.encoder, 'sync_max_audio_length', None)
+            if sync_max is None and hasattr(self.encoder, 'module'):
+                sync_max = getattr(self.encoder.module, 'sync_max_audio_length', None)
+            if sync_max is None:
+                sync_max = 'NOT_SET'
+            
+            encoder_type = type(self.encoder).__name__
             if self._forward_call_count <= 100 or self._forward_call_count % 10 == 0:
                 logging.info(
-                    f"[FORWARD] Rank {self.global_rank}: Calling encoder (pre_encoder path), "
+                    f"[FORWARD] Rank {self.global_rank}: Calling encoder (pre_encoder path, type={encoder_type}), "
                     f"processed_noisy_input_signal.shape={processed_noisy_input_signal.shape}, "
                     f"length.shape={processed_noisy_input_signal_length.shape if processed_noisy_input_signal_length is not None else 'N/A'}, "
                     f"encoder.sync_max_audio_length={sync_max}"
@@ -1244,7 +1275,7 @@ class EncDecDenoiseMaskedTokenPredModel(EncDecMaskedTokenPredModel):
             elif sync_max is True:  # CRITICAL: Always log if sync_max_audio_length is True (potential deadlock)
                 logging.error(
                     f"[FORWARD] Rank {self.global_rank}: CRITICAL - encoder.sync_max_audio_length={sync_max} "
-                    f"may cause DDP deadlock! (call_count={self._forward_call_count})"
+                    f"may cause DDP deadlock! (call_count={self._forward_call_count}, encoder_type={encoder_type})"
                 )
             try:
                 encoded, encoded_len = self.encoder(
