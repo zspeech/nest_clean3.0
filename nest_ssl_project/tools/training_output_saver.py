@@ -62,26 +62,44 @@ class ForwardBackwardHook:
                 output.detach().cpu().clone() if isinstance(output, torch.Tensor) else output
             )
     
-    def backward_hook(self, module, grad_input, grad_output):
-        """Backward hook to capture gradients."""
-        if isinstance(grad_input, tuple):
-            self.backward_input_grads.append([
-                g.detach().cpu().clone() if isinstance(g, torch.Tensor) and g is not None else None
-                for g in grad_input
-            ])
-        else:
-            self.backward_input_grads.append(
-                grad_input.detach().cpu().clone() if isinstance(grad_input, torch.Tensor) and grad_input is not None else None
-            )
-        
+    def backward_hook_simple(self, module, grad_input, grad_output):
+        """Simplified backward hook for register_backward_hook (only receives grad_output)."""
+        # Clone immediately to avoid inplace modification issues
+        # Note: grad_output may be views that get modified inplace by subsequent operations
         if isinstance(grad_output, tuple):
+            # Clone immediately before any inplace operations can modify the view
             self.backward_output_grads.append([
-                g.detach().cpu().clone() if isinstance(g, torch.Tensor) and g is not None else None
+                g.detach().clone().cpu() if isinstance(g, torch.Tensor) and g is not None else None
                 for g in grad_output
             ])
         else:
             self.backward_output_grads.append(
-                grad_output.detach().cpu().clone() if isinstance(grad_output, torch.Tensor) and grad_output is not None else None
+                grad_output.detach().clone().cpu() if isinstance(grad_output, torch.Tensor) and grad_output is not None else None
+            )
+    
+    def backward_hook(self, module, grad_input, grad_output):
+        """Backward hook to capture gradients (for register_full_backward_hook)."""
+        # Clone immediately to avoid inplace modification issues
+        # Note: grad_output may be views that get modified inplace by subsequent operations
+        if isinstance(grad_input, tuple):
+            self.backward_input_grads.append([
+                g.detach().clone().cpu() if isinstance(g, torch.Tensor) and g is not None else None
+                for g in grad_input
+            ])
+        else:
+            self.backward_input_grads.append(
+                grad_input.detach().clone().cpu() if isinstance(grad_input, torch.Tensor) and grad_input is not None else None
+            )
+        
+        if isinstance(grad_output, tuple):
+            # Clone immediately before any inplace operations can modify the view
+            self.backward_output_grads.append([
+                g.detach().clone().cpu() if isinstance(g, torch.Tensor) and g is not None else None
+                for g in grad_output
+            ])
+        else:
+            self.backward_output_grads.append(
+                grad_output.detach().clone().cpu() if isinstance(grad_output, torch.Tensor) and grad_output is not None else None
             )
     
     def register(self, module):
