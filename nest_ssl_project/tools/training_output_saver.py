@@ -182,6 +182,7 @@ class TrainingOutputSaver:
         forward_output: Any,
         loss: torch.Tensor,
         save_batch: bool = True,
+        save_weights: bool = False,
     ):
         """
         Save outputs for a training step.
@@ -192,6 +193,7 @@ class TrainingOutputSaver:
             forward_output: Model forward output
             loss: Loss tensor
             save_batch: Whether to save batch data (default: True)
+            save_weights: Whether to save model weights (default: False, set True after optimizer.step())
         """
         # Check if we should save this step
         should_save = (
@@ -237,7 +239,7 @@ class TrainingOutputSaver:
         # Save loss
         torch.save(loss.detach().cpu().clone(), step_dir / 'loss.pt')
         
-        # Save parameter gradients
+        # Save parameter gradients (before optimizer step)
         param_grads = {}
         for name, param in self.model.named_parameters():
             if param.grad is not None:
@@ -247,19 +249,33 @@ class TrainingOutputSaver:
         
         torch.save(param_grads, step_dir / 'parameter_gradients.pt')
         
-        # Save hook data (intermediate outputs)
-        hook_data = {}
+        # Save all layer forward outputs (from hooks)
+        layer_outputs = {}
         for name, hook in self.hooks.items():
-            hook_data[name] = hook.get_data()
+            hook_data = hook.get_data()
+            # Only save forward outputs (not backward gradients to avoid inplace errors)
+            layer_outputs[name] = {
+                'forward_inputs': hook_data.get('forward_inputs'),
+                'forward_outputs': hook_data.get('forward_outputs'),
+            }
         
-        with open(step_dir / 'hook_data.pkl', 'wb') as f:
-            pickle.dump(hook_data, f)
+        with open(step_dir / 'layer_outputs.pkl', 'wb') as f:
+            pickle.dump(layer_outputs, f)
+        
+        # Save model weights (after optimizer step)
+        if save_weights:
+            param_weights = {}
+            for name, param in self.model.named_parameters():
+                param_weights[name] = param.detach().cpu().clone()
+            
+            torch.save(param_weights, step_dir / 'parameter_weights.pt')
         
         # Save step metadata
         step_metadata = {
             'step': step,
             'loss': loss.item() if isinstance(loss, torch.Tensor) else loss,
             'num_modules': len(self.hooks),
+            'saved_weights': save_weights,
         }
         with open(step_dir / 'metadata.pkl', 'wb') as f:
             pickle.dump(step_metadata, f)
