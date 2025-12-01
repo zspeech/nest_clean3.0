@@ -133,7 +133,7 @@ def parse_save_steps(save_steps_str: str) -> list:
     return [int(x.strip()) for x in save_steps_str.split(',')]
 
 
-@hydra_runner(config_path="../conf/ssl/nest", config_name="nest_fast-conformer")
+@hydra_runner(config_path="examples/asr/conf/ssl/nest", config_name="nest_fast-conformer")
 def main(cfg):
     # Get parameters from Hydra config or use defaults
     # These can be set via command line: output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4"

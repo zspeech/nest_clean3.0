@@ -2,24 +2,29 @@
 
 ## NeMo Training with Output Saver
 
+**Important**: Run this command from NeMo root directory or examples/asr directory.
+
 ### Windows PowerShell (Copy and Run - Single Line)
 
 ```powershell
-python tools/nemo_training_with_saver.py --config-path ../conf/ssl/nest --config-name nest_fast-conformer output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4" model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+# From NeMo root directory
+python examples/asr/speech_pretraining/masked_token_pred_pretrain.py output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4" model.train_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+
+# Or if you copied nemo_training_with_saver.py to NeMo/tools/
+python tools/nemo_training_with_saver.py --config-path examples/asr/conf/ssl/nest --config-name nest_fast-conformer output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4" model.train_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
 ```
 
 ### Linux/Mac Bash (Copy and Run - Multi-line)
 
 ```bash
-python tools/nemo_training_with_saver.py \
-    --config-path ../conf/ssl/nest \
-    --config-name nest_fast-conformer \
+# From NeMo root directory
+python examples/asr/speech_pretraining/masked_token_pred_pretrain.py \
     output_dir=./saved_nemo_outputs \
     seed=42 \
     save_steps="0,1,2,3,4" \
-    model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json \
+    model.train_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/train_manifest.json \
     model.train_ds.noise_manifest=null \
-    model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json \
+    model.validation_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/val_manifest.json \
     trainer.devices=1 \
     trainer.max_epochs=1 \
     trainer.limit_train_batches=5 \
@@ -29,7 +34,7 @@ python tools/nemo_training_with_saver.py \
 ### Windows CMD (Copy and Run - Single Line)
 
 ```cmd
-python tools/nemo_training_with_saver.py --config-path ../conf/ssl/nest --config-name nest_fast-conformer output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4" model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+python examples/asr/speech_pretraining/masked_token_pred_pretrain.py output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4" model.train_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=../nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
 ```
 
 ## nest_ssl_project Training with Comparator
