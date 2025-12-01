@@ -12,7 +12,8 @@
 ```powershell
 # limit_train_batches: use + (new key)
 # num_sanity_val_steps: use without + (exists in config, just override)
-python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Nemo_nest/NeMo/examples/asr/conf/ssl/nest --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 +trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+# Use absolute paths for manifest files
+python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Nemo_nest/NeMo/examples/asr/conf/ssl/nest --config-name nest_fast-conformer model.train_ds.manifest_filepath=C:/Users/zhile/Desktop/Nemo_nest/nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=C:/Users/zhile/Desktop/Nemo_nest/nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 +trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
 ```
 
 ### nest_ssl_project Training with Comparator
