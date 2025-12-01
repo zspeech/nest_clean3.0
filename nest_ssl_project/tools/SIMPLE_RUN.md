@@ -5,7 +5,8 @@
 ### Windows PowerShell (从 nest_ssl_project 目录运行)
 
 ```powershell
-python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Nemo_nest/NeMo/examples/asr/conf/ssl/nest --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+# 注意：使用 + 前缀添加配置文件中不存在的键
+python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Nemo_nest/NeMo/examples/asr/conf/ssl/nest --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 +trainer.limit_train_batches=5 +trainer.num_sanity_val_steps=0
 ```
 
 **说明**：
@@ -18,7 +19,8 @@ python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Ne
 ### Windows PowerShell (从 nest_ssl_project 目录运行)
 
 ```powershell
-python tools/nest_training_with_comparator.py --config-path config --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+# 注意：使用 + 前缀添加配置文件中不存在的键
+python tools/nest_training_with_comparator.py --config-path config --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 +trainer.limit_train_batches=5 +trainer.num_sanity_val_steps=0
 ```
 
 **说明**：
@@ -32,14 +34,16 @@ python tools/nest_training_with_comparator.py --config-path config --config-name
 
 ```powershell
 # 在 NeMo 环境中，从 nest_ssl_project 目录运行
-python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Nemo_nest/NeMo/examples/asr/conf/ssl/nest --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+# 注意：使用 + 前缀添加配置文件中不存在的键
+python tools/nemo_training_with_saver.py --config-path C:/Users/zhile/Desktop/Nemo_nest/NeMo/examples/asr/conf/ssl/nest --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 +trainer.limit_train_batches=5 +trainer.num_sanity_val_steps=0
 ```
 
 ### 步骤 2: nest_ssl_project 环境 - 比较输出
 
 ```powershell
 # 在 nest_ssl_project 环境中运行
-python tools/nest_training_with_comparator.py --config-path config --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 trainer.limit_train_batches=5 trainer.num_sanity_val_steps=0
+# 注意：使用 + 前缀添加配置文件中不存在的键
+python tools/nest_training_with_comparator.py --config-path config --config-name nest_fast-conformer model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json model.train_ds.noise_manifest=null model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json trainer.devices=1 trainer.max_epochs=1 +trainer.limit_train_batches=5 +trainer.num_sanity_val_steps=0
 ```
 
 ## 配置文件位置
