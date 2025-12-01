@@ -19,9 +19,10 @@ from pathlib import Path
 import torch
 from omegaconf import OmegaConf
 
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root / 'nest_ssl_project'))
+# Add project root to path (same as other tools)
+# Get nest_ssl_project directory (parent of tools directory)
+project_dir = Path(__file__).parent.parent  # nest_ssl_project directory
+sys.path.insert(0, str(project_dir))
 
 from models.ssl_models import EncDecDenoiseMaskedTokenPredModel
 from utils.logging import get_logger
@@ -31,7 +32,7 @@ logger = get_logger(__name__)
 
 def get_model_config():
     """Get default model config for testing."""
-    config_path = project_root / 'nest_ssl_project' / 'config' / 'nest_fast-conformer.yaml'
+    config_path = project_dir / 'config' / 'nest_fast-conformer.yaml'
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
     
