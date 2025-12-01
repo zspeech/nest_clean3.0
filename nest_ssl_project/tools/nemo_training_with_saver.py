@@ -77,6 +77,7 @@ class TrainingOutputSaverCallback(pl.Callback):
         
         self.saver = None
         self.current_step = 0
+        self.weights_saved = False  # Track if weights have been saved for step 0
     
     def on_train_start(self, trainer, pl_module):
         """Setup saver when training starts."""
@@ -116,27 +117,40 @@ class TrainingOutputSaverCallback(pl.Callback):
             loss = outputs if isinstance(outputs, torch.Tensor) else None
         
         if loss is not None:
-            # Save forward outputs and gradients (before optimizer step)
+            # Save forward outputs and gradients
             self.saver.save_step(
                 step=self.current_step,
                 batch=batch,
                 forward_output=forward_output,
                 loss=loss,
-                save_weights=False,  # Will save weights after optimizer step
+                save_weights=False,  # Save weights separately after optimizer step
             )
+            
+            # Save model weights after optimizer.step() (which happens before on_train_batch_end)
+            if not self.weights_saved:
+                step_dir = self.saver.output_dir / f"step_{self.current_step}"
+                if step_dir.exists():
+                    param_weights = {}
+                    for name, param in pl_module.named_parameters():
+                        param_weights[name] = param.detach().cpu().clone()
+                    
+                    torch.save(param_weights, step_dir / 'parameter_weights.pt')
+                    logging.info(f"Saved model weights after optimizer step for step {self.current_step}")
+                    self.weights_saved = True
     
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+        """Save model weights before optimizer step (only for first batch)."""
+        # This is called before optimizer.step(), so we save weights after step
+        # We'll save in on_train_batch_end after optimizer step completes
+        pass
+    
+    def on_after_backward(self, trainer, pl_module):
         """Save model weights after optimizer step (only for first batch)."""
-        if self.current_step == 0 and self.saver:
-            # Save weights after optimizer step
-            step_dir = self.saver.output_dir / f"step_{self.current_step}"
-            if step_dir.exists():
-                param_weights = {}
-                for name, param in pl_module.named_parameters():
-                    param_weights[name] = param.detach().cpu().clone()
-                
-                torch.save(param_weights, step_dir / 'parameter_weights.pt')
-                logging.info(f"Saved model weights after optimizer step for step {self.current_step}")
+        # Note: This is called after backward but before optimizer.step()
+        # We need to save weights after optimizer.step(), so we'll do it in on_train_batch_end
+        # But we need to track that optimizer step has completed
+        # Actually, on_train_batch_end is called after optimizer.step(), so we can save there
+        pass
     
     def on_train_end(self, trainer, pl_module):
         """Finalize saver when training ends."""
