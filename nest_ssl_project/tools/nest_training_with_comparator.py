@@ -160,35 +160,33 @@ def is_global_rank_zero():
 
 @hydra_runner(config_path="config", config_name="nest_fast-conformer")
 def main(cfg):
-    parser = argparse.ArgumentParser(description="nest_ssl_project training with output comparator")
-    parser.add_argument('--saved_outputs_dir', type=str, required=True, help='Directory containing saved NeMo outputs')
-    parser.add_argument('--comparison_output_dir', type=str, default=None, help='Directory to save comparison results')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed (must match NeMo training)')
-    parser.add_argument('--atol', type=float, default=1e-5, help='Absolute tolerance')
-    parser.add_argument('--rtol', type=float, default=1e-5, help='Relative tolerance')
-    
-    # Parse known args
-    args, unknown = parser.parse_known_args()
+    # Get parameters from Hydra config (can be set in config file or via command line override)
+    saved_outputs_dir = cfg.get('saved_outputs_dir', './saved_nemo_outputs')
+    comparison_output_dir = cfg.get('comparison_output_dir', None)
+    seed = cfg.get('seed', 42)
+    atol = cfg.get('atol', 1e-5)
+    rtol = cfg.get('rtol', 1e-5)
     
     if is_global_rank_zero():
         logger.info(f"Hydra config: {OmegaConf.to_yaml(cfg)}")
-        logger.info(f"Saved outputs directory: {args.saved_outputs_dir}")
-        logger.info(f"Comparison output directory: {args.comparison_output_dir}")
-        logger.info(f"Seed: {args.seed}")
+        logger.info(f"Saved outputs directory: {saved_outputs_dir}")
+        logger.info(f"Comparison output directory: {comparison_output_dir}")
+        logger.info(f"Seed: {seed}")
+        logger.info(f"Tolerance: atol={atol}, rtol={rtol}")
     
     # Set seed
-    set_seed(args.seed)
+    set_seed(seed)
     
     # Create trainer
     trainer = pl.Trainer(**cfg.trainer)
     
     # Add comparator callback
     comparator_callback = TrainingOutputComparatorCallback(
-        saved_outputs_dir=args.saved_outputs_dir,
-        comparison_output_dir=args.comparison_output_dir,
-        seed=args.seed,
-        atol=args.atol,
-        rtol=args.rtol,
+        saved_outputs_dir=saved_outputs_dir,
+        comparison_output_dir=comparison_output_dir,
+        seed=seed,
+        atol=atol,
+        rtol=rtol,
     )
     trainer.callbacks.append(comparator_callback)
     

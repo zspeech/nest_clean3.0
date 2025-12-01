@@ -135,16 +135,15 @@ def parse_save_steps(save_steps_str: str) -> list:
 
 @hydra_runner(config_path="examples/asr/conf/ssl/nest", config_name="nest_fast-conformer")
 def main(cfg):
-    # Get parameters from Hydra config or use defaults
-    # These can be set via command line: output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4"
+    # Get parameters from Hydra config (can be set in config file or via command line override)
     output_dir = cfg.get('output_dir', './saved_nemo_outputs')
     seed = cfg.get('seed', 42)
     save_steps_str = cfg.get('save_steps', None)
     save_steps = parse_save_steps(save_steps_str) if save_steps_str else None
     
-    # Validate required parameters
+    # Use defaults from config file if not specified
     if output_dir is None:
-        raise ValueError("output_dir must be specified. Use: output_dir=./saved_nemo_outputs")
+        output_dir = './saved_nemo_outputs'
     
     logging.info(f"Hydra config: {OmegaConf.to_yaml(cfg)}")
     logging.info(f"Output directory: {output_dir}")

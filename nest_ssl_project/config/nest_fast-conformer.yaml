@@ -21,11 +21,11 @@ name: "SSL-NEST-FastConformer"
 
 # Training output saver/comparator configuration (for comparison with NeMo)
 # These parameters are used by nemo_training_with_saver.py and nest_training_with_comparator.py
-output_dir: null  # Directory to save training outputs (set via command line: output_dir=./saved_nemo_outputs)
+output_dir: ./saved_nemo_outputs  # Directory to save training outputs
 seed: 42  # Random seed for reproducibility (must match between NeMo and nest_ssl_project)
-save_steps: null  # Comma-separated list of steps to save (e.g., "0,1,2,3,4,10,20,50") or null to save all steps
-saved_outputs_dir: null  # Directory containing saved NeMo outputs (for comparison, set via command line)
-comparison_output_dir: null  # Directory to save comparison results (optional, set via command line)
+save_steps: "0,1,2,3,4"  # Comma-separated list of steps to save (e.g., "0,1,2,3,4,10,20,50") or null to save all steps
+saved_outputs_dir: ./saved_nemo_outputs  # Directory containing saved NeMo outputs (for comparison)
+comparison_output_dir: ./comparison_results  # Directory to save comparison results (optional)
 atol: 1e-5  # Absolute tolerance for output comparison
 rtol: 1e-5  # Relative tolerance for output comparison
 
