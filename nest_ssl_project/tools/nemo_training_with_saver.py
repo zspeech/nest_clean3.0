@@ -9,10 +9,12 @@ Usage:
     python tools/nemo_training_with_saver.py \
         --config-path <config_path> \
         --config-name <config_name> \
-        --output_dir ./saved_nemo_outputs \
-        --seed 42 \
-        --save_steps 0,1,2,3,4,10,20,50 \
+        output_dir=./saved_nemo_outputs \
+        seed=42 \
+        save_steps="0,1,2,3,4,10,20,50" \
         <other training args>
+
+Note: Use Hydra syntax (key=value) instead of --key value for output_dir, seed, save_steps
 """
 
 import argparse
@@ -133,17 +135,16 @@ def parse_save_steps(save_steps_str: str) -> list:
 
 @hydra_runner(config_path="../conf/ssl/nest", config_name="nest_fast-conformer")
 def main(cfg):
-    parser = argparse.ArgumentParser(description="NeMo training with output saver")
-    parser.add_argument('--output_dir', type=str, required=True, help='Output directory for saved outputs')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--save_steps', type=str, default=None, help='Comma-separated list of steps to save (e.g., "0,1,2,3,4,10,20,50")')
+    # Get parameters from Hydra config or use defaults
+    # These can be set via command line: output_dir=./saved_nemo_outputs seed=42 save_steps="0,1,2,3,4"
+    output_dir = cfg.get('output_dir', './saved_nemo_outputs')
+    seed = cfg.get('seed', 42)
+    save_steps_str = cfg.get('save_steps', None)
+    save_steps = parse_save_steps(save_steps_str) if save_steps_str else None
     
-    # Parse known args (Hydra will handle the rest)
-    args, unknown = parser.parse_known_args()
-    
-    output_dir = args.output_dir
-    seed = args.seed
-    save_steps = parse_save_steps(args.save_steps)
+    # Validate required parameters
+    if output_dir is None:
+        raise ValueError("output_dir must be specified. Use: output_dir=./saved_nemo_outputs")
     
     logging.info(f"Hydra config: {OmegaConf.to_yaml(cfg)}")
     logging.info(f"Output directory: {output_dir}")
