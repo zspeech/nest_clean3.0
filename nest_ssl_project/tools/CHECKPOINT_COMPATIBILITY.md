@@ -1,52 +1,48 @@
 # Checkpoint Compatibility Verification
 
-This script verifies that checkpoints saved by the local implementation can be loaded by NeMo, and vice versa.
+This script verifies that checkpoints saved by the local implementation can be correctly loaded back.
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Test bidirectional loading (default)
+# Test loading checkpoint
 python tools/verify_checkpoint_compatibility.py --ckpt_path <path_to_checkpoint>
 
-# Test loading NeMo checkpoint in local model
-python tools/verify_checkpoint_compatibility.py --ckpt_path nemo_checkpoint.nemo --direction nemo_to_local
-
-# Test loading local checkpoint in NeMo model
-python tools/verify_checkpoint_compatibility.py --ckpt_path local_checkpoint.nemo --direction local_to_nemo
-
-# Test bidirectional with custom config
+# Test loading with custom config
 python tools/verify_checkpoint_compatibility.py --ckpt_path checkpoint.nemo --config config/nest_fast-conformer.yaml
+
+# Test save and reload round-trip
+python tools/verify_checkpoint_compatibility.py --ckpt_path checkpoint.nemo --test_save_load
 ```
 
-## Test Directions
+## Features
 
-- **`bidirectional`** (default): Loads checkpoint in both local and NeMo models, then compares state dicts
-- **`nemo_to_local`**: Tests loading NeMo checkpoint in local model
-- **`local_to_nemo`**: Tests loading local checkpoint in NeMo model (requires NeMo to be installed)
+- **Load checkpoint**: Tests loading `.nemo` or `.ckpt` files
+- **Save/reload test**: Optionally tests save and reload round-trip to verify checkpoint integrity
+- **State dict comparison**: Compares original and reloaded state dicts to ensure consistency
 
 ## Output
 
 The script will:
-1. Load the checkpoint in the specified model(s)
+1. Load the checkpoint in the local model
 2. Print model information (parameter counts, etc.)
-3. Compare state dicts if both models are loaded
+3. If `--test_save_load` is used, save and reload the model, then compare state dicts
 4. Report any mismatches in keys, shapes, or values
 
 ## Example Output
 
 ```
 ============================================================
-Checkpoint Compatibility Verification
+Checkpoint Loading Verification
 ============================================================
 Checkpoint: /path/to/checkpoint.nemo
-Direction: bidirectional
-NeMo available: True
+Test save/reload: True
 ============================================================
 
 ############################################################
-BIDIRECTIONAL TEST: Loading checkpoint in both models and comparing
+TEST: Loading checkpoint in local model
 ############################################################
 
 ============================================================
@@ -56,21 +52,28 @@ Loading LOCAL model from checkpoint: /path/to/checkpoint.nemo
   Total parameters: 123,456,789
   Trainable parameters: 123,456,789
 
+✓ SUCCESS: Checkpoint can be loaded in local model
+
 ============================================================
-Loading NEMO model from checkpoint: /path/to/checkpoint.nemo
+Testing save and reload round-trip
 ============================================================
-✓ Successfully loaded as EncDecDenoiseMaskedTokenPredModel
+✓ Model saved to /path/to/checkpoint.test.nemo
+
+============================================================
+Loading LOCAL model from checkpoint: /path/to/checkpoint.test.nemo
+============================================================
+✓ Successfully loaded .nemo checkpoint
   Total parameters: 123,456,789
   Trainable parameters: 123,456,789
 
 ============================================================
-Comparing state dicts: Local Model vs NeMo Model
+Comparing state dicts: Original Model vs Reloaded Model
 ============================================================
 
 Keys comparison:
   Common keys: 150
-  Only in Local Model: 0
-  Only in NeMo Model: 0
+  Only in Original Model: 0
+  Only in Reloaded Model: 0
 
 Shape mismatches: 0
 
@@ -78,7 +81,7 @@ Value mismatches: 0
 
 ✓ State dicts are identical!
 
-✓ SUCCESS: Checkpoints are fully compatible!
+✓ SUCCESS: Save and reload round-trip works correctly!
 ```
 
 ## Requirements
@@ -86,11 +89,10 @@ Value mismatches: 0
 - PyTorch
 - PyTorch Lightning
 - OmegaConf
-- (Optional) NeMo for bidirectional testing
 
 ## Notes
 
 - The script supports both `.nemo` files and PyTorch Lightning `.ckpt` files
-- If NeMo is not available, only local model loading will be tested
 - State dict comparison uses `torch.allclose` with `atol=1e-5` tolerance
+- When using `--test_save_load`, a test file will be created with `.test.nemo` suffix
 

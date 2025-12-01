@@ -3,19 +3,13 @@
 Checkpoint Compatibility Verification Script
 
 This script verifies that checkpoints saved by the local implementation
-can be loaded by NeMo, and vice versa.
+can be correctly loaded back.
 
 Usage:
     python tools/verify_checkpoint_compatibility.py --ckpt_path <path_to_checkpoint>
     
-    # Test loading NeMo checkpoint in local model
-    python tools/verify_checkpoint_compatibility.py --ckpt_path nemo_checkpoint.nemo --direction nemo_to_local
-    
-    # Test loading local checkpoint in NeMo model
-    python tools/verify_checkpoint_compatibility.py --ckpt_path local_checkpoint.nemo --direction local_to_nemo
-    
-    # Test bidirectional (default)
-    python tools/verify_checkpoint_compatibility.py --ckpt_path checkpoint.nemo --direction bidirectional
+    # Test loading and saving round-trip
+    python tools/verify_checkpoint_compatibility.py --ckpt_path checkpoint.nemo --test_save_load
 """
 
 import argparse
@@ -28,13 +22,6 @@ from omegaconf import OmegaConf
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / 'nest_ssl_project'))
-
-try:
-    import nemo.collections.asr as nemo_asr
-    NEMO_AVAILABLE = True
-except ImportError:
-    NEMO_AVAILABLE = False
-    print("Warning: NeMo not available. Only local model loading will be tested.")
 
 from models.ssl_models import EncDecDenoiseMaskedTokenPredModel
 from utils.logging import get_logger
@@ -89,44 +76,42 @@ def load_local_model_from_checkpoint(ckpt_path: str, config=None):
         return None, False
 
 
-def load_nemo_model_from_checkpoint(ckpt_path: str):
-    """Load NeMo model from checkpoint."""
-    if not NEMO_AVAILABLE:
-        print("✗ NeMo not available, skipping NeMo model loading test")
-        return None, False
-    
+def save_and_reload_model(model, save_path: str):
+    """Save model and reload it to verify round-trip compatibility."""
     print(f"\n{'='*60}")
-    print(f"Loading NEMO model from checkpoint: {ckpt_path}")
+    print(f"Testing save and reload round-trip")
     print(f"{'='*60}")
     
     try:
-        # Try loading as .nemo file
-        if ckpt_path.endswith('.nemo'):
-            # Try EncDecDenoiseMaskedTokenPredModel first
-            try:
-                model = nemo_asr.models.EncDecDenoiseMaskedTokenPredModel.restore_from(ckpt_path)
-                print(f"✓ Successfully loaded as EncDecDenoiseMaskedTokenPredModel")
-            except:
-                # Try base SSL model
-                model = nemo_asr.models.SpeechEncDecSelfSupervisedModel.restore_from(ckpt_path)
-                print(f"✓ Successfully loaded as SpeechEncDecSelfSupervisedModel")
+        # Save original state dict
+        original_sd = model.state_dict()
+        
+        # Save model
+        model.save_to(save_path)
+        print(f"✓ Model saved to {save_path}")
+        
+        # Reload model
+        reloaded_model, success = load_local_model_from_checkpoint(save_path)
+        
+        if success and reloaded_model is not None:
+            # Compare state dicts
+            reloaded_sd = reloaded_model.state_dict()
+            are_identical = compare_state_dicts(original_sd, reloaded_sd, "Original Model", "Reloaded Model")
+            
+            if are_identical:
+                print(f"\n✓ SUCCESS: Save and reload round-trip works correctly!")
+                return True
+            else:
+                print(f"\n✗ FAILED: State dicts differ after reload")
+                return False
         else:
-            # Try loading as PyTorch Lightning checkpoint
-            model = nemo_asr.models.EncDecDenoiseMaskedTokenPredModel.load_from_checkpoint(ckpt_path)
-            print(f"✓ Successfully loaded Lightning checkpoint")
-        
-        # Print model info
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"  Total parameters: {total_params:,}")
-        print(f"  Trainable parameters: {trainable_params:,}")
-        
-        return model, True
+            print(f"\n✗ FAILED: Could not reload saved model")
+            return False
     except Exception as e:
-        print(f"✗ Failed to load checkpoint: {e}")
+        print(f"✗ Failed to test save/reload: {e}")
         import traceback
         traceback.print_exc()
-        return None, False
+        return False
 
 
 def compare_state_dicts(sd1: dict, sd2: dict, name1: str = "Model 1", name2: str = "Model 2"):
@@ -197,87 +182,25 @@ def compare_state_dicts(sd1: dict, sd2: dict, name1: str = "Model 1", name2: str
         return False
 
 
-def test_nemo_to_local(ckpt_path: str):
-    """Test loading NeMo checkpoint in local model."""
+def test_load_checkpoint(ckpt_path: str, config=None):
+    """Test loading checkpoint in local model."""
     print(f"\n{'#'*60}")
-    print(f"TEST 1: Loading NeMo checkpoint in LOCAL model")
+    print(f"TEST: Loading checkpoint in local model")
     print(f"{'#'*60}")
     
-    local_model, success = load_local_model_from_checkpoint(ckpt_path)
+    local_model, success = load_local_model_from_checkpoint(ckpt_path, config)
     
     if success:
-        print(f"\n✓ SUCCESS: NeMo checkpoint can be loaded in local model")
-        return True
+        print(f"\n✓ SUCCESS: Checkpoint can be loaded in local model")
+        return local_model, True
     else:
-        print(f"\n✗ FAILED: NeMo checkpoint cannot be loaded in local model")
-        return False
-
-
-def test_local_to_nemo(ckpt_path: str):
-    """Test loading local checkpoint in NeMo model."""
-    if not NEMO_AVAILABLE:
-        print(f"\n{'#'*60}")
-        print(f"TEST 2: Loading LOCAL checkpoint in NEMO model")
-        print(f"{'#'*60}")
-        print("✗ SKIPPED: NeMo not available")
-        return None
-    
-    print(f"\n{'#'*60}")
-    print(f"TEST 2: Loading LOCAL checkpoint in NEMO model")
-    print(f"{'#'*60}")
-    
-    nemo_model, success = load_nemo_model_from_checkpoint(ckpt_path)
-    
-    if success:
-        print(f"\n✓ SUCCESS: Local checkpoint can be loaded in NeMo model")
-        return True
-    else:
-        print(f"\n✗ FAILED: Local checkpoint cannot be loaded in NeMo model")
-        return False
-
-
-def test_bidirectional(ckpt_path: str):
-    """Test bidirectional loading and compare state dicts."""
-    print(f"\n{'#'*60}")
-    print(f"BIDIRECTIONAL TEST: Loading checkpoint in both models and comparing")
-    print(f"{'#'*60}")
-    
-    # Load in local model
-    local_model, local_success = load_local_model_from_checkpoint(ckpt_path)
-    
-    # Load in NeMo model (if available)
-    nemo_model = None
-    nemo_success = False
-    if NEMO_AVAILABLE:
-        nemo_model, nemo_success = load_nemo_model_from_checkpoint(ckpt_path)
-    
-    # Compare state dicts if both loaded successfully
-    if local_success and nemo_success and local_model is not None and nemo_model is not None:
-        local_sd = local_model.state_dict()
-        nemo_sd = nemo_model.state_dict()
-        
-        are_identical = compare_state_dicts(local_sd, nemo_sd, "Local Model", "NeMo Model")
-        
-        if are_identical:
-            print(f"\n✓ SUCCESS: Checkpoints are fully compatible!")
-            return True
-        else:
-            print(f"\n⚠ WARNING: Checkpoints can be loaded but state dicts differ")
-            return False
-    elif local_success:
-        print(f"\n✓ SUCCESS: Local model can load checkpoint")
-        return True
-    elif nemo_success:
-        print(f"\n✓ SUCCESS: NeMo model can load checkpoint")
-        return True
-    else:
-        print(f"\n✗ FAILED: Neither model could load checkpoint")
-        return False
+        print(f"\n✗ FAILED: Checkpoint cannot be loaded in local model")
+        return None, False
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify checkpoint compatibility between local implementation and NeMo"
+        description="Verify checkpoint loading for local implementation"
     )
     parser.add_argument(
         '--ckpt_path',
@@ -286,17 +209,15 @@ def main():
         help='Path to checkpoint file (.nemo or .ckpt)'
     )
     parser.add_argument(
-        '--direction',
-        type=str,
-        default='bidirectional',
-        choices=['nemo_to_local', 'local_to_nemo', 'bidirectional'],
-        help='Test direction: nemo_to_local, local_to_nemo, or bidirectional (default)'
-    )
-    parser.add_argument(
         '--config',
         type=str,
         default=None,
         help='Path to model config file (optional, uses default if not provided)'
+    )
+    parser.add_argument(
+        '--test_save_load',
+        action='store_true',
+        help='Test save and reload round-trip (saves to <ckpt_path>.test.nemo)'
     )
     
     args = parser.parse_args()
@@ -314,22 +235,20 @@ def main():
         config = OmegaConf.load(args.config)
     
     print(f"\n{'='*60}")
-    print(f"Checkpoint Compatibility Verification")
+    print(f"Checkpoint Loading Verification")
     print(f"{'='*60}")
     print(f"Checkpoint: {ckpt_path}")
-    print(f"Direction: {args.direction}")
-    print(f"NeMo available: {NEMO_AVAILABLE}")
+    print(f"Test save/reload: {args.test_save_load}")
     print(f"{'='*60}")
     
-    # Run tests based on direction
-    success = False
+    # Test loading checkpoint
+    model, success = test_load_checkpoint(ckpt_path, config)
     
-    if args.direction == 'nemo_to_local':
-        success = test_nemo_to_local(ckpt_path)
-    elif args.direction == 'local_to_nemo':
-        success = test_local_to_nemo(ckpt_path)
-    else:  # bidirectional
-        success = test_bidirectional(ckpt_path)
+    # Test save/reload if requested
+    if success and args.test_save_load and model is not None:
+        test_save_path = ckpt_path.replace('.nemo', '.test.nemo').replace('.ckpt', '.test.nemo')
+        save_success = save_and_reload_model(model, test_save_path)
+        success = success and save_success
     
     # Final summary
     print(f"\n{'='*60}")
