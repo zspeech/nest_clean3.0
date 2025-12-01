@@ -64,11 +64,12 @@ class ForwardBackwardHook:
     
     def backward_hook(self, module, grad_input, grad_output):
         """Backward hook to capture gradients (for register_full_backward_hook)."""
-        # Clone immediately to avoid inplace modification issues
-        # Note: grad_output may be views that get modified inplace by subsequent operations
-        # We must clone before any inplace operations can modify the view
+        # NOTE: We avoid capturing grad_output to prevent inplace modification errors.
+        # grad_output may be views that get modified inplace by subsequent operations (e.g., ReLU),
+        # which causes RuntimeError even when we clone immediately.
+        # Instead, we only capture grad_input and rely on parameter gradients saved in save_step().
         
-        # Capture grad_input
+        # Capture grad_input only (safer, less likely to cause inplace errors)
         if isinstance(grad_input, tuple):
             self.backward_input_grads.append([
                 g.detach().clone().cpu() if isinstance(g, torch.Tensor) and g is not None else None
@@ -79,22 +80,8 @@ class ForwardBackwardHook:
                 grad_input.detach().clone().cpu() if isinstance(grad_input, torch.Tensor) and grad_input is not None else None
             )
         
-        # Capture grad_output - clone immediately to avoid inplace modification
-        if isinstance(grad_output, tuple):
-            # Clone immediately before any inplace operations can modify the view
-            cloned_grads = []
-            for g in grad_output:
-                if isinstance(g, torch.Tensor) and g is not None:
-                    # Clone immediately and move to CPU to break any view relationships
-                    cloned_grads.append(g.detach().clone().cpu())
-                else:
-                    cloned_grads.append(None)
-            self.backward_output_grads.append(cloned_grads)
-        else:
-            if isinstance(grad_output, torch.Tensor) and grad_output is not None:
-                self.backward_output_grads.append(grad_output.detach().clone().cpu())
-            else:
-                self.backward_output_grads.append(None)
+        # Do NOT capture grad_output to avoid inplace modification errors
+        # Parameter gradients are already captured in save_step() via param.grad
         
         # Return None to use original gradients (don't modify gradient flow)
         return None
@@ -102,7 +89,15 @@ class ForwardBackwardHook:
     def register(self, module):
         """Register hooks on module."""
         self.forward_hook_handle = module.register_forward_hook(self.forward_hook)
-        self.backward_hook_handle = module.register_full_backward_hook(self.backward_hook)
+        # Only register backward hook if we want to capture grad_input
+        # Note: We avoid capturing grad_output to prevent inplace modification errors
+        try:
+            self.backward_hook_handle = module.register_full_backward_hook(self.backward_hook)
+        except Exception as e:
+            # If backward hook registration fails, continue without it
+            # Parameter gradients will still be captured in save_step()
+            print(f"Warning: Failed to register backward hook: {e}")
+            self.backward_hook_handle = None
     
     def remove(self):
         """Remove hooks."""
