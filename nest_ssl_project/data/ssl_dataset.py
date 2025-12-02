@@ -376,10 +376,17 @@ class AudioNoiseDataset(audio_to_text.AudioToCharDataset):
         if offset is None:
             offset = 0
 
+        # FIX: Round duration to 2 decimal places to match NeMo's behavior (or manifest mismatch)
+        # NeMo reads 199840 samples (12.49s), Nest reads 199760 (12.485s) from manifest
+        import math
+        duration = sample.duration
+        if duration is not None and duration > 0:
+            duration = math.ceil(duration * 100) / 100.0
+
         audio = self.featurizer.process(
             sample.audio_file,
             offset=offset,
-            duration=sample.duration,
+            duration=duration,
             trim=self.trim,
             orig_sr=sample.orig_sr,
             channel_selector=self.channel_selector,
