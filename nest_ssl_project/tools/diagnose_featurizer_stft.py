@@ -103,8 +103,15 @@ def main():
         return
     
     # Load buffers
-    nemo_buffers = torch.load(nemo_dir.parent / "buffers" / "buffers.pt", map_location='cpu', weights_only=False)
-    nest_buffers = torch.load(nest_dir.parent / "buffers" / "buffers.pt", map_location='cpu', weights_only=False)
+    try:
+        nemo_buffers = torch.load(nemo_dir / "buffers" / "buffers.pt", map_location='cpu', weights_only=False)
+        nest_buffers = torch.load(nest_dir / "buffers" / "buffers.pt", map_location='cpu', weights_only=False)
+    except FileNotFoundError as e:
+        print(f"Error loading buffers: {e}")
+        print(f"Please check if buffers/buffers.pt exists in output directories.")
+        # Continue without buffers if possible, but manual STFT will fail
+        nemo_buffers = {}
+        nest_buffers = {}
     
     print("="*80)
     print("STFT AND MEL FILTERBANK DIAGNOSIS")

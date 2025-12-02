@@ -250,8 +250,8 @@ def main():
     print("="*80)
     
     # Try to load buffers from buffers.pt file
-    nemo_buffers_path = nemo_step_dir.parent / "buffers" / "buffers.pt"
-    nest_buffers_path = nest_step_dir.parent / "buffers" / "buffers.pt"
+    nemo_buffers_path = nemo_dir / "buffers" / "buffers.pt"
+    nest_buffers_path = nest_dir / "buffers" / "buffers.pt"
     
     nemo_buffers = None
     nest_buffers = None
