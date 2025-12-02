@@ -339,6 +339,51 @@ def main():
                     compare_tensors("Simulated vs Actual NeMo Output", norm_x, actual_out, atol=1e-3)
                 else:
                     print("     [SKIP] Shape mismatch, cannot compare directly")
+            
+            # Save Log Mel and seq_len for manual normalize_batch testing
+            print("\n8. Saving Log Mel and seq_len for manual testing:")
+            try:
+                import sys
+                sys.path.insert(0, str(Path(__file__).parent.parent))
+                from modules.audio_preprocessing import normalize_batch
+                
+                # Convert single sample [D, T] to batch format [B, D, T]
+                nemo_log_mel_batch = nemo_log_mel.unsqueeze(0)  # [1, D, T]
+                nest_log_mel_batch = nest_log_mel.unsqueeze(0)  # [1, D, T]
+                nemo_seq_len_batch = nemo_outputs[1][:1]  # [1]
+                nest_seq_len_batch = nest_outputs[1][:1]  # [1]
+                
+                print(f"   Testing normalize_batch with actual Log Mel:")
+                print(f"     NeMo Log Mel shape: {nemo_log_mel_batch.shape}, seq_len: {nemo_seq_len_batch.tolist()}")
+                print(f"     nest Log Mel shape: {nest_log_mel_batch.shape}, seq_len: {nest_seq_len_batch.tolist()}")
+                
+                # Call normalize_batch
+                nemo_norm_result, nemo_norm_mean, nemo_norm_std = normalize_batch(
+                    nemo_log_mel_batch, nemo_seq_len_batch, "per_feature"
+                )
+                nest_norm_result, nest_norm_mean, nest_norm_std = normalize_batch(
+                    nest_log_mel_batch, nest_seq_len_batch, "per_feature"
+                )
+                
+                print(f"   normalize_batch outputs:")
+                print(f"     NeMo result shape: {nemo_norm_result.shape}")
+                print(f"     nest result shape: {nest_norm_result.shape}")
+                
+                # Compare results
+                compare_tensors("normalize_batch result (NeMo vs nest)", nemo_norm_result, nest_norm_result, atol=1e-4)
+                
+                # Compare with actual outputs
+                actual_nemo_out = nemo_outputs[0][:1]  # First sample [1, D, T]
+                actual_nest_out = nest_outputs[0][:1]  # First sample [1, D, T]
+                
+                print(f"\n   Comparing normalize_batch output with actual featurizer output:")
+                compare_tensors("normalize_batch vs Actual NeMo", nemo_norm_result, actual_nemo_out, atol=1e-4)
+                compare_tensors("normalize_batch vs Actual nest", nest_norm_result, actual_nest_out, atol=1e-4)
+                
+            except Exception as e:
+                print(f"   Error in manual normalize_batch test: {e}")
+                import traceback
+                traceback.print_exc()
 
     else:
         print("   Skipping STFT comparison due to computation failure.")

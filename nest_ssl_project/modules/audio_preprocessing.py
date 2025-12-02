@@ -47,6 +47,17 @@ def normalize_batch(x, seq_len, normalize_type):
     if normalize_type == "per_feature":
         batch_size = x.shape[0]
         max_time = x.shape[2]
+        
+        # DEBUG: Save inputs for comparison (only on first call to avoid spam)
+        if not hasattr(normalize_batch, '_debug_saved'):
+            normalize_batch._debug_saved = True
+            normalize_batch._debug_inputs = {
+                'x': x.detach().cpu().clone(),
+                'seq_len': seq_len.detach().cpu().clone(),
+                'x_shape': x.shape,
+                'x_dtype': str(x.dtype),
+                'seq_len_values': seq_len.detach().cpu().clone().tolist(),
+            }
 
         # When doing stream capture to a graph, item() is not allowed
         # becuase it calls cudaStreamSynchronize(). Therefore, we are
