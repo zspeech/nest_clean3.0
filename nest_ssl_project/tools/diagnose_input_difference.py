@@ -76,11 +76,19 @@ def compare_tensors(t1, t2, name, atol=1e-5, rtol=1e-5):
     if t1.dtype != t2.dtype:
         t1 = t1.to(t2.dtype)
     
-    diff = (t1 - t2).abs()
+    # Use float tensors for numeric stats if original dtype is not floating point
+    if torch.is_floating_point(t1):
+        t1_float = t1
+        t2_float = t2
+    else:
+        t1_float = t1.to(torch.float32)
+        t2_float = t2.to(torch.float32)
+    
+    diff = (t1_float - t2_float).abs()
     max_diff = diff.max().item()
     mean_diff = diff.mean().item()
     
-    is_close = torch.allclose(t1, t2, atol=atol, rtol=rtol)
+    is_close = torch.allclose(t1_float, t2_float, atol=atol, rtol=rtol)
     
     return {
         'match': is_close,
@@ -88,16 +96,16 @@ def compare_tensors(t1, t2, name, atol=1e-5, rtol=1e-5):
         'max_diff': max_diff,
         'mean_diff': mean_diff,
         't1_stats': {
-            'min': t1.min().item(),
-            'max': t1.max().item(),
-            'mean': t1.mean().item(),
-            'std': t1.std().item(),
+            'min': t1_float.min().item(),
+            'max': t1_float.max().item(),
+            'mean': t1_float.mean().item(),
+            'std': t1_float.std().item(),
         },
         't2_stats': {
-            'min': t2.min().item(),
-            'max': t2.max().item(),
-            'mean': t2.mean().item(),
-            'std': t2.std().item(),
+            'min': t2_float.min().item(),
+            'max': t2_float.max().item(),
+            'mean': t2_float.mean().item(),
+            'std': t2_float.std().item(),
         },
     }
 
