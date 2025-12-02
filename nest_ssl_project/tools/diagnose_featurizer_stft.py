@@ -54,21 +54,53 @@ def main():
     parser = argparse.ArgumentParser(description="Diagnose STFT differences")
     parser.add_argument("--nemo_dir", type=str, required=True, help="NeMo output directory")
     parser.add_argument("--nest_dir", type=str, required=True, help="nest output directory")
-    parser.add_argument("--step", type=int, default=0, help="Step to compare")
+    parser.add_argument("--step", type=int, default=None, help="Step to compare (default: auto-detect)")
     args = parser.parse_args()
     
     nemo_dir = Path(args.nemo_dir)
     nest_dir = Path(args.nest_dir)
     
+    # Auto-detect step if not provided
+    if args.step is None:
+        # Try to find common steps
+        nemo_steps = [int(d.name.split('_')[1]) for d in nemo_dir.glob("step_*") if d.is_dir()]
+        nest_steps = [int(d.name.split('_')[1]) for d in nest_dir.glob("step_*") if d.is_dir()]
+        
+        common_steps = sorted(list(set(nemo_steps) & set(nest_steps)))
+        
+        if not common_steps:
+            print(f"No common steps found in {nemo_dir} and {nest_dir}")
+            # If no common steps, try to use any available step
+            if nemo_steps:
+                args.step = sorted(nemo_steps)[0]
+                print(f"Using NeMo step: {args.step}")
+            else:
+                print("No steps found.")
+                return
+        else:
+            args.step = common_steps[0]
+            print(f"Auto-detected common step: {args.step}")
+    
+    print(f"Analyzing step: {args.step}")
+    
     # Load batch data
-    nemo_batch = torch.load(nemo_dir / f"step_{args.step}" / "batch.pt", map_location='cpu', weights_only=False)
-    nest_batch = torch.load(nest_dir / f"step_{args.step}" / "batch.pt", map_location='cpu', weights_only=False)
+    try:
+        nemo_batch = torch.load(nemo_dir / f"step_{args.step}" / "batch.pt", map_location='cpu', weights_only=False)
+        nest_batch = torch.load(nest_dir / f"step_{args.step}" / "batch.pt", map_location='cpu', weights_only=False)
+    except FileNotFoundError as e:
+        print(f"Error loading batch data: {e}")
+        print(f"Please check if step_{args.step} exists in both directories.")
+        return
     
     # Load layer outputs
-    with open(nemo_dir / f"step_{args.step}" / "layer_outputs.pkl", 'rb') as f:
-        nemo_layers = pickle.load(f)
-    with open(nest_dir / f"step_{args.step}" / "layer_outputs.pkl", 'rb') as f:
-        nest_layers = pickle.load(f)
+    try:
+        with open(nemo_dir / f"step_{args.step}" / "layer_outputs.pkl", 'rb') as f:
+            nemo_layers = pickle.load(f)
+        with open(nest_dir / f"step_{args.step}" / "layer_outputs.pkl", 'rb') as f:
+            nest_layers = pickle.load(f)
+    except FileNotFoundError as e:
+        print(f"Error loading layer outputs: {e}")
+        return
     
     # Load buffers
     nemo_buffers = torch.load(nemo_dir.parent / "buffers" / "buffers.pt", map_location='cpu', weights_only=False)
