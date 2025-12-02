@@ -28,11 +28,15 @@ def compare_tensors(name, t1, t2, atol=1e-5, rtol=1e-5):
     if t1.dtype != t2.dtype:
         print(f"  {name}: Dtype mismatch: {t1.dtype} vs {t2.dtype}")
     
-    diff = (t1 - t2).abs()
+    # Convert to float for comparison to handle integer types (e.g. Long)
+    t1_float = t1.float()
+    t2_float = t2.float()
+    
+    diff = (t1_float - t2_float).abs()
     max_diff = diff.max().item()
     mean_diff = diff.mean().item()
     
-    is_close = torch.allclose(t1, t2, atol=atol, rtol=rtol)
+    is_close = torch.allclose(t1_float, t2_float, atol=atol, rtol=rtol)
     
     status = "[OK]" if is_close else "[FAIL]"
     print(f"  {name}: {status} Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}")
