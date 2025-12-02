@@ -27,7 +27,7 @@ python train_with_saver.py \
     +trainer.limit_train_batches=1 \
     trainer.num_sanity_val_steps=0 \
     +output_dir=./saved_nest_outputs \
-    +seed=42 \
-    +save_steps="0" \
+    seed=42 \
+    save_steps="0" \
     +load_nemo_weights=./saved_nemo_outputs/initial_weights/parameter_weights.pt
 

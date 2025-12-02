@@ -28,9 +28,9 @@ python train_with_saver.py ^
     trainer.num_sanity_val_steps=0 ^
     exp_manager.resume_if_exists=false ^
     exp_manager.resume_ignore_no_checkpoint=true ^
-    +output_dir=./saved_nest_outputs ^
-    +seed=42 ^
-    +save_steps="0" ^
+    output_dir=./saved_nest_outputs ^
+    seed=42 ^
+    save_steps="0" ^
     +load_nemo_weights=./saved_nemo_outputs/initial_weights/parameter_weights.pt
 
 pause
