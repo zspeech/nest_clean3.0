@@ -18,11 +18,30 @@ Based on Transformer-XL: https://arxiv.org/abs/1901.02860
 """
 
 import math
+from contextlib import nullcontext
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 INF_VAL = 10000.0
+
+
+def avoid_float16_autocast_context():
+    """
+    If the current autocast context is float16, cast it to bfloat16
+    if available (unless we're in jit) or float32.
+    This matches NeMo's implementation in nemo.utils.cast_utils.
+    """
+    if torch.is_autocast_enabled() and torch.get_autocast_gpu_dtype() == torch.float16:
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            return torch.amp.autocast('cuda', dtype=torch.float32)
+
+        if torch.cuda.is_bf16_supported():
+            return torch.amp.autocast('cuda', dtype=torch.bfloat16)
+        else:
+            return torch.amp.autocast('cuda', dtype=torch.float32)
+    else:
+        return nullcontext()
 
 
 class MultiHeadAttention(nn.Module):
@@ -130,6 +149,14 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
         x = x[:, :, 1:].view(b, h, qlen, pos_len)  # (b, h, t1, t2)
         return x
     
+    def update_cache(self, key, value, query, cache):
+        """Update cache for streaming inference."""
+        if cache is not None:
+            key = value = torch.cat([cache, key], dim=1)
+            q_keep_size = query.shape[1] - self.cache_drop_size if hasattr(self, 'cache_drop_size') else query.shape[1]
+            cache = torch.cat([cache[:, q_keep_size:, :], query[:, :q_keep_size, :]], dim=1)
+        return key, value, query, cache
+
     def forward(self, query, key, value, mask, pos_emb, cache=None):
         """Compute 'Scaled Dot Product Attention' with rel. positional encoding.
         Args:
@@ -138,36 +165,51 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
             value (torch.Tensor): (batch, time2, size)
             mask (torch.Tensor): (batch, time1, time2)
             pos_emb (torch.Tensor): (batch, time1, size)
-            cache (torch.Tensor): (batch, time_cache, size) - not used in simplified version
+            cache (torch.Tensor): (batch, time_cache, size)
         Returns:
             output (torch.Tensor): transformed `value` (batch, time1, d_model) weighted by the query dot key attention
+            cache (torch.Tensor): (batch, time_cache_next, size) if cache is not None
         """
-        if pos_emb is None:
-            # Fallback to standard attention if no positional encoding
-            return super().forward(query, key, value, mask)
-        
-        q, k, v = self.forward_qkv(query, key, value)
-        q = q.transpose(1, 2)  # (batch, time1, head, d_k)
-        
-        n_batch_pos = pos_emb.size(0)
-        n_batch = value.size(0)
-        p = self.linear_pos(pos_emb).view(n_batch_pos, -1, self.h, self.d_k)
-        p = p.transpose(1, 2)  # (batch, head, time1, d_k)
-        
-        # (batch, head, time1, d_k)
-        q_with_bias_u = (q + self.pos_bias_u).transpose(1, 2)
-        # (batch, head, time1, d_k)
-        q_with_bias_v = (q + self.pos_bias_v).transpose(1, 2)
-        
-        # compute matrix b and matrix d
-        # (batch, head, time1, time2)
-        matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
-        matrix_bd = self.rel_shift(matrix_bd)
-        
-        # drops extra elements in the matrix_bd to match the matrix_ac's size
-        matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
-        matrix_bd = matrix_bd[:, :, :, : matrix_ac.size(-1)]
-        scores = (matrix_ac + matrix_bd) / self.s_d_k  # (batch, head, time1, time2)
-        
-        return self.forward_attention(v, scores, mask)
+        key, value, query, cache = self.update_cache(key=key, value=value, query=query, cache=cache)
+
+        if torch.is_autocast_enabled():
+            query, key, value = query.to(torch.float32), key.to(torch.float32), value.to(torch.float32)
+
+        # temporary until we solve this more gracefully
+        with avoid_float16_autocast_context():
+            if pos_emb is None:
+                # Fallback to standard attention if no positional encoding
+                q, k, v = self.forward_qkv(query, key, value)
+                scores = torch.matmul(q, k.transpose(-2, -1)) / self.s_d_k
+                out = self.forward_attention(v, scores, mask)
+            else:
+                q, k, v = self.forward_qkv(query, key, value)
+                q = q.transpose(1, 2)  # (batch, time1, head, d_k)
+
+                n_batch_pos = pos_emb.size(0)
+                n_batch = value.size(0)
+                p = self.linear_pos(pos_emb).view(n_batch_pos, -1, self.h, self.d_k)
+                p = p.transpose(1, 2)  # (batch, head, time1, d_k)
+
+                # (batch, head, time1, d_k)
+                q_with_bias_u = (q + self.pos_bias_u).transpose(1, 2)
+                # (batch, head, time1, d_k)
+                q_with_bias_v = (q + self.pos_bias_v).transpose(1, 2)
+
+                # compute matrix b and matrix d
+                # (batch, head, time1, time2)
+                matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
+                matrix_bd = self.rel_shift(matrix_bd)
+
+                # drops extra elements in the matrix_bd to match the matrix_ac's size
+                matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
+                matrix_bd = matrix_bd[:, :, :, : matrix_ac.size(-1)]
+                scores = (matrix_ac + matrix_bd) / self.s_d_k  # (batch, head, time1, time2)
+
+                out = self.forward_attention(v, scores, mask)
+
+        if cache is None:
+            return out
+        else:
+            return out, cache
 

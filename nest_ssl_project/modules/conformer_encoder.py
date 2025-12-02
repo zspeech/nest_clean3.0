@@ -18,6 +18,7 @@
 
 import math
 import logging
+from contextlib import nullcontext
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -28,6 +29,24 @@ from torch.nn import LayerNorm
 __all__ = ['ConformerEncoder']
 
 INF_VAL = 10000.0
+
+
+def avoid_float16_autocast_context():
+    """
+    If the current autocast context is float16, cast it to bfloat16
+    if available (unless we're in jit) or float32.
+    This matches NeMo's implementation in nemo.utils.cast_utils.
+    """
+    if torch.is_autocast_enabled() and torch.get_autocast_gpu_dtype() == torch.float16:
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            return torch.amp.autocast('cuda', dtype=torch.float32)
+
+        if torch.cuda.is_bf16_supported():
+            return torch.amp.autocast('cuda', dtype=torch.bfloat16)
+        else:
+            return torch.amp.autocast('cuda', dtype=torch.float32)
+    else:
+        return nullcontext()
 
 
 # ============================================================================
@@ -795,9 +814,14 @@ class MultiHeadAttention(nn.Module):
         """Compute 'Scaled Dot Product Attention'."""
         key, value, query, cache = self.update_cache(key=key, value=value, query=query, cache=cache)
 
-        q, k, v = self.forward_qkv(query, key, value)
-        scores = torch.matmul(q, k.transpose(-2, -1)) / self.s_d_k
-        out = self.forward_attention(v, scores, mask)
+        if torch.is_autocast_enabled():
+            query, key, value = query.to(torch.float32), key.to(torch.float32), value.to(torch.float32)
+
+        # temporary until we solve this more gracefully
+        with avoid_float16_autocast_context():
+            q, k, v = self.forward_qkv(query, key, value)
+            scores = torch.matmul(q, k.transpose(-2, -1)) / self.s_d_k
+            out = self.forward_attention(v, scores, mask)
 
         if cache is None:
             return out
@@ -857,28 +881,33 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
         """Compute 'Scaled Dot Product Attention' with rel. positional encoding."""
         key, value, query, cache = self.update_cache(key=key, value=value, query=query, cache=cache)
 
-        q, k, v = self.forward_qkv(query, key, value)
-        q = q.transpose(1, 2)  # (batch, time1, head, d_k)
+        if torch.is_autocast_enabled():
+            query, key, value = query.to(torch.float32), key.to(torch.float32), value.to(torch.float32)
 
-        n_batch_pos = pos_emb.size(0)
-        p = self.linear_pos(pos_emb).view(n_batch_pos, -1, self.h, self.d_k)
-        p = p.transpose(1, 2)  # (batch, head, time1, d_k)
+        # temporary until we solve this more gracefully
+        with avoid_float16_autocast_context():
+            q, k, v = self.forward_qkv(query, key, value)
+            q = q.transpose(1, 2)  # (batch, time1, head, d_k)
 
-        # (batch, head, time1, d_k)
-        q_with_bias_u = (q + self.pos_bias_u).transpose(1, 2)
-        # (batch, head, time1, d_k)
-        q_with_bias_v = (q + self.pos_bias_v).transpose(1, 2)
+            n_batch_pos = pos_emb.size(0)
+            p = self.linear_pos(pos_emb).view(n_batch_pos, -1, self.h, self.d_k)
+            p = p.transpose(1, 2)  # (batch, head, time1, d_k)
 
-        # compute matrix b and matrix d
-        matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
-        matrix_bd = self.rel_shift(matrix_bd)
+            # (batch, head, time1, d_k)
+            q_with_bias_u = (q + self.pos_bias_u).transpose(1, 2)
+            # (batch, head, time1, d_k)
+            q_with_bias_v = (q + self.pos_bias_v).transpose(1, 2)
 
-        # drops extra elements in the matrix_bd to match the matrix_ac's size
-        matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
-        matrix_bd = matrix_bd[:, :, :, : matrix_ac.size(-1)]
-        scores = (matrix_ac + matrix_bd) / self.s_d_k
+            # compute matrix b and matrix d
+            matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
+            matrix_bd = self.rel_shift(matrix_bd)
 
-        out = self.forward_attention(v, scores, mask)
+            # drops extra elements in the matrix_bd to match the matrix_ac's size
+            matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
+            matrix_bd = matrix_bd[:, :, :, : matrix_ac.size(-1)]
+            scores = (matrix_ac + matrix_bd) / self.s_d_k
+
+            out = self.forward_attention(v, scores, mask)
 
         if cache is None:
             return out
