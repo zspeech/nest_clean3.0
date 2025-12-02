@@ -41,15 +41,15 @@ CONSTANT = 1e-5
 
 
 def normalize_batch(x, seq_len, normalize_type):
-    """Normalize batch following NeMo's implementation."""
+    """Normalize batch - copied exactly from NeMo's features.py"""
     x_mean = None
     x_std = None
     if normalize_type == "per_feature":
         batch_size = x.shape[0]
         max_time = x.shape[2]
-        
+
         # When doing stream capture to a graph, item() is not allowed
-        # because it calls cudaStreamSynchronize(). Therefore, we are
+        # becuase it calls cudaStreamSynchronize(). Therefore, we are
         # sacrificing some error checking when running with cuda graphs.
         if (
             torch.cuda.is_available()
@@ -63,20 +63,16 @@ def normalize_batch(x, seq_len, normalize_type):
             )
         time_steps = torch.arange(max_time, device=x.device).unsqueeze(0).expand(batch_size, max_time)
         valid_mask = time_steps < seq_len.unsqueeze(1)
-        
-        # Ensure 0.0 matches x's dtype to prevent unexpected type promotion
-        zero_val = torch.tensor(0.0, device=x.device, dtype=x.dtype)
-        
-        x_mean_numerator = torch.where(valid_mask.unsqueeze(1), x, zero_val).sum(axis=2)
+        x_mean_numerator = torch.where(valid_mask.unsqueeze(1), x, 0.0).sum(axis=2)
         x_mean_denominator = valid_mask.sum(axis=1)
         x_mean = x_mean_numerator / x_mean_denominator.unsqueeze(1)
-        
+
         # Subtract 1 in the denominator to correct for the bias.
         x_std = torch.sqrt(
-            torch.sum(torch.where(valid_mask.unsqueeze(1), x - x_mean.unsqueeze(2), zero_val) ** 2, axis=2)
+            torch.sum(torch.where(valid_mask.unsqueeze(1), x - x_mean.unsqueeze(2), 0.0) ** 2, axis=2)
             / (x_mean_denominator.unsqueeze(1) - 1.0)
         )
-        x_std = x_std.masked_fill(x_std.isnan(), zero_val)  # edge case: only 1 frame in denominator
+        x_std = x_std.masked_fill(x_std.isnan(), 0.0)  # edge case: only 1 frame in denominator
         # make sure x_std is not zero
         x_std += CONSTANT
         return (x - x_mean.unsqueeze(2)) / x_std.unsqueeze(2), x_mean, x_std
@@ -89,6 +85,14 @@ def normalize_batch(x, seq_len, normalize_type):
         # make sure x_std is not zero
         x_std += CONSTANT
         return (x - x_mean.view(-1, 1, 1)) / x_std.view(-1, 1, 1), x_mean, x_std
+    elif "fixed_mean" in normalize_type and "fixed_std" in normalize_type:
+        x_mean = torch.tensor(normalize_type["fixed_mean"], device=x.device)
+        x_std = torch.tensor(normalize_type["fixed_std"], device=x.device)
+        return (
+            (x - x_mean.view(x.shape[0], x.shape[1]).unsqueeze(2)) / x_std.view(x.shape[0], x.shape[1]).unsqueeze(2),
+            x_mean,
+            x_std,
+        )
     else:
         return x, x_mean, x_std
 
