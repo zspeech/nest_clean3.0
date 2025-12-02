@@ -247,49 +247,65 @@ def main():
             # Compare Normalization
             print("\n7. Normalization (per_feature):")
             # Simulate normalization on the single sample we computed
-            # Input: [D, T]
+            # Input: [D, T] - This is 'norm_x' from Log Mel calculation, let's call it 'x'
             x = nemo_log_mel
-            seq_len = x.shape[1]
             
-            # Calculate mean and std manually
-            mean = x.mean(dim=1, keepdim=True)
-            std = x.std(dim=1, keepdim=True)
+            # We need to handle masking correctly
+            # nemo_outputs[1][0] is the valid length of the first sample
+            valid_len = nemo_outputs[1][0].item()
             
-            # Note: NeMo's normalize_batch uses a slightly different std calculation (biased estimator + subtract 1 in denom?)
-            # Let's try to match NeMo's logic exactly
-            # x_std = sqrt( sum((x - mean)**2) / (N - 1) )  <-- standard unbiased
-            # NeMo: sqrt( sum(...) / (N - 1) ) + 1e-5
+            # Create mask
+            mask = torch.arange(x.shape[1], device=x.device) < valid_len
+            # mask shape: [T]
             
-            norm_x = (x - mean) / (std + 1e-5)
+            # Calculate mean and std using mask
+            # x shape: [D, T]
+            # mask shape: [T] -> broadcast to [D, T]
+            mask_broadcast = mask.unsqueeze(0).expand_as(x)
             
-            print(f"   Simulated Normalized Output stats:")
-            print(f"     mean: {norm_x.mean().item():.6f}")
-            print(f"     std: {norm_x.std().item():.6f}")
-            print(f"     min: {norm_x.min().item():.6f}")
-            print(f"     max: {norm_x.max().item():.6f}")
+            # Mean
+            x_masked = torch.where(mask_broadcast, x, torch.zeros_like(x))
+            mean = x_masked.sum(dim=1, keepdim=True) / valid_len
             
-            # Compare with actual featurizer output (first sample, unpadded region)
+            # Std
+            # Variance = sum((x - mean)**2) / (N - 1)
+            diff_sq = (x - mean)**2
+            diff_sq_masked = torch.where(mask_broadcast, diff_sq, torch.zeros_like(diff_sq))
+            var = diff_sq_masked.sum(dim=1, keepdim=True) / (valid_len - 1)
+            std = torch.sqrt(var) + 1e-5
+            
+            # Normalize
+            norm_x = (x - mean) / std
+            
+            # Mask output (padding area should be 0)
+            norm_x = torch.where(mask_broadcast, norm_x, torch.zeros_like(norm_x))
+            
+            print(f"   Simulated Normalized Output stats (valid region):")
+            # Calculate stats only on valid region
+            valid_vals = norm_x[:, :valid_len]
+            print(f"     mean: {valid_vals.mean().item():.6f}")
+            print(f"     std: {valid_vals.std().item():.6f}")
+            print(f"     min: {valid_vals.min().item():.6f}")
+            print(f"     max: {valid_vals.max().item():.6f}")
+            
+            # Compare with actual featurizer output (first sample)
             if nemo_outputs and len(nemo_outputs) >= 2:
                 actual_out = nemo_outputs[0][0] # First sample
-                actual_len = nemo_outputs[1][0].item()
                 
-                # Slice actual output to valid length
-                actual_out_valid = actual_out[:, :actual_len]
+                # Truncate or pad norm_x to match actual_out length
+                if norm_x.shape[1] > actual_out.shape[1]:
+                    norm_x = norm_x[:, :actual_out.shape[1]]
+                elif norm_x.shape[1] < actual_out.shape[1]:
+                    pad_amt = actual_out.shape[1] - norm_x.shape[1]
+                    norm_x = torch.nn.functional.pad(norm_x, (0, pad_amt))
                 
                 # Compare shapes
                 print(f"   Comparing simulated vs actual:")
                 print(f"     Simulated shape: {norm_x.shape}")
-                print(f"     Actual valid shape: {actual_out_valid.shape}")
+                print(f"     Actual shape: {actual_out.shape}")
                 
-                # Slice norm_x to match actual_out_valid length if necessary
-                if norm_x.shape[1] != actual_out_valid.shape[1]:
-                    print(f"     [INFO] Trimming shapes to match for comparison")
-                    min_len = min(norm_x.shape[1], actual_out_valid.shape[1])
-                    norm_x = norm_x[:, :min_len]
-                    actual_out_valid = actual_out_valid[:, :min_len]
-                
-                if norm_x.shape == actual_out_valid.shape:
-                    compare_tensors("Simulated vs Actual NeMo Output", norm_x, actual_out_valid, atol=1e-3)
+                if norm_x.shape == actual_out.shape:
+                    compare_tensors("Simulated vs Actual NeMo Output", norm_x, actual_out, atol=1e-3)
                 else:
                     print("     [SKIP] Shape mismatch, cannot compare directly")
 
