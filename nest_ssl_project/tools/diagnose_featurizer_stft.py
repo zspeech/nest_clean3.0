@@ -268,6 +268,10 @@ def main():
             x_masked = torch.where(mask_broadcast, x, torch.zeros_like(x))
             mean = x_masked.sum(dim=1, keepdim=True) / valid_len
             
+            # Calculate diff_sq_masked for variants
+            diff_sq = (x - mean)**2
+            diff_sq_masked = torch.where(mask_broadcast, diff_sq, torch.zeros_like(diff_sq))
+            
             # Try Variant 1: Unbiased estimator (standard)
             # var = diff_sq_masked.sum(dim=1, keepdim=True) / (valid_len - 1)
             
