@@ -2,9 +2,7 @@
 # NeMo 训练脚本 - 保存输出用于精度对齐
 # 如果 GPU 检测失败，可以手动修改下面的 accelerator 为 "cpu" 或 "cuda"
 
-cd NeMo
-
-python examples/asr/speech_pretraining/masked_token_pred_pretrain_with_saver.py \
+python scripts/masked_token_pred_pretrain_with_saver.py \
     --config-name nest_fast-conformer \
     model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json \
     model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json \

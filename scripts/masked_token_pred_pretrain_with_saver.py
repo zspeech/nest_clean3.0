@@ -20,14 +20,18 @@ import numpy as np
 from pathlib import Path
 import sys
 
+# Ensure NeMo is in path
+nemo_path = Path(__file__).parent.parent / 'NeMo'
+if nemo_path.exists():
+    sys.path.insert(0, str(nemo_path))
+
 from nemo.collections.asr.models.ssl_models import EncDecDenoiseMaskedTokenPredModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 
 # Import training output saver from nest_ssl_project
-# Note: You may need to adjust the path based on your setup
-nest_ssl_path = Path(__file__).parent.parent.parent.parent.parent / 'nest_ssl_project'
+nest_ssl_path = Path(__file__).parent.parent / 'nest_ssl_project'
 if nest_ssl_path.exists():
     sys.path.insert(0, str(nest_ssl_path))
     from tools.training_output_saver import TrainingOutputSaver
@@ -111,14 +115,6 @@ class TrainingOutputSaverCallback(pl.Callback):
         )
         self.saver.setup_hooks(pl_module)
         self.saver.save_model_structure(pl_module)
-        if hasattr(self.saver, 'save_buffers'):
-            try:
-                self.saver.save_buffers(pl_module)
-                logging.info(f"Successfully saved buffers to {self.output_dir}/buffers/buffers.pt")
-            except Exception as e:
-                logging.error(f"Failed to save buffers: {e}", exc_info=True)
-        else:
-            logging.warning("save_buffers method not found in TrainingOutputSaver")
         
         # Register hook on decoder to capture forward output (log_probs)
         def decoder_hook(module, input, output):
@@ -252,7 +248,7 @@ def resolve_manifest_path(manifest_path: str, base_dir: Path) -> str:
     return manifest_path_str
 
 
-@hydra_runner(config_path="../conf/ssl/nest", config_name="nest_fast-conformer")
+@hydra_runner(config_path="../NeMo/examples/asr/conf/ssl/nest", config_name="nest_fast-conformer")
 def main(cfg):
     # Get parameters from Hydra config
     output_dir = cfg.get('output_dir', './saved_nemo_outputs')
@@ -263,12 +259,9 @@ def main(cfg):
     # Resolve manifest paths if they start with 'nest_ssl_project/'
     # Find project root: parent of NeMo directory
     script_dir = Path(__file__).resolve().parent
-    # Assuming script is at: NeMo/examples/asr/speech_pretraining/masked_token_pred_pretrain_with_saver.py
-    # Project root should be: NeMo/../ (parent of NeMo directory)
-    # script_dir = NeMo/examples/asr/speech_pretraining/
-    # script_dir.parent.parent.parent = NeMo/
-    # script_dir.parent.parent.parent.parent = project root (Nemo_nest/)
-    project_root = script_dir.parent.parent.parent.parent
+    # Assuming script is at: scripts/masked_token_pred_pretrain_with_saver.py
+    # Project root should be: scripts/../ (parent of scripts directory)
+    project_root = script_dir.parent
     
     # Resolve manifest paths in model config
     logging.info(f"Project root: {project_root}")
@@ -328,6 +321,22 @@ def main(cfg):
     # Create model
     asr_model = EncDecDenoiseMaskedTokenPredModel(cfg=cfg.model, trainer=trainer)
     
+    # FORCE DETERMINISM (Added by aligner)
+    if hasattr(asr_model, 'preprocessor'):
+        logging.info("FORCING DETERMINISM ON PREPROCESSOR")
+        if hasattr(asr_model.preprocessor, 'dither'):
+             logging.info(f"  Old dither: {asr_model.preprocessor.dither}")
+             asr_model.preprocessor.dither = 0.0
+             logging.info(f"  New dither: {asr_model.preprocessor.dither}")
+        if hasattr(asr_model.preprocessor, 'pad_to'):
+             logging.info(f"  Old pad_to: {asr_model.preprocessor.pad_to}")
+             asr_model.preprocessor.pad_to = 16
+             logging.info(f"  New pad_to: {asr_model.preprocessor.pad_to}")
+        if hasattr(asr_model.preprocessor, 'mag_power'):
+             logging.info(f"  Old mag_power: {asr_model.preprocessor.mag_power}")
+             asr_model.preprocessor.mag_power = 2.0
+             logging.info(f"  New mag_power: {asr_model.preprocessor.mag_power}")
+    
     # Initialize from pretrained if specified
     asr_model.maybe_init_from_pretrained_checkpoint(cfg)
     
@@ -337,4 +346,3 @@ def main(cfg):
 
 if __name__ == "__main__":
     main()
-
