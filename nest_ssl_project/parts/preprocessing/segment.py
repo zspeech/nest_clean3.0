@@ -88,19 +88,6 @@ class AudioSegment:
                             samples = torch.nn.functional.pad(samples, (0, 0, 0, expected_len - current_len))
 
         self.samples = samples
-                            samples = samples[:expected_len]
-                        else:
-                            samples = torch.nn.functional.pad(samples, (0, expected_len - current_len))
-            else: # Multi-channel [samples, channels]
-                    current_len = samples.size(0)
-                    if current_len != expected_len:
-                        if current_len > expected_len:
-                            samples = samples[:expected_len, :]
-                        else:
-                            # pad only last dimension (dim 0 is samples in our case for Multi-channel?)
-                            samples = torch.nn.functional.pad(samples, (0, 0, 0, expected_len - current_len))
-
-        self.samples = samples
         self.sample_rate = sample_rate
     
     @classmethod
