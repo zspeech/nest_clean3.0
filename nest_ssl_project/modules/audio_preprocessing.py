@@ -177,14 +177,14 @@ class FilterbankFeatures(nn.Module):
     def get_seq_len(self, seq_len):
         """Compute output sequence length.
         
-        Note: Using explicit integer division to avoid torch.floor_divide 
-        version differences across PyTorch versions.
+        IMPORTANT: Must use torch.floor_divide to match NeMo exactly.
+        The difference between floor_divide and (float division + floor) can be 1
+        in certain cases, which causes all downstream computations to mismatch.
         """
+        # Assuming that center is True if stft_pad_amount = 0
         pad_amount = self.stft_pad_amount * 2 if self.stft_pad_amount is not None else self.n_fft // 2 * 2
-        # Convert to float, do division, then floor and convert to long
-        # This matches NeMo's behavior more consistently across PyTorch versions
-        seq_len_float = (seq_len.float() + pad_amount - self.n_fft) / self.hop_length
-        return seq_len_float.floor().to(dtype=torch.long)
+        seq_len = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length)
+        return seq_len.to(dtype=torch.long)
     
     def forward(self, x, seq_len, linear_spec=False):
         """
