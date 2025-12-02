@@ -63,33 +63,28 @@ class AudioSegment:
             # Convert back to torch tensor
             samples = torch.from_numpy(samples_np).float()
             sample_rate = target_sr
-            
-            # CRITICAL FIX: Force length alignment if duration is provided
-            # This handles differences in librosa resampling precision across environments
-            # NeMo's output length matches int(duration * target_sr) exactly (e.g. 199840 for 12.49s @ 16k)
-            if duration is not None and duration > 0:
-                expected_len = int(duration * target_sr)
-                # Handle different dimensions (samples, channels) or (samples,)
-                if samples.ndim == 1:
-                     current_len = samples.size(0)
-                     if current_len != expected_len:
-                          if current_len > expected_len:
-                              samples = samples[:expected_len]
-                          else:
-                              samples = torch.nn.functional.pad(samples, (0, expected_len - current_len))
-                else: # Multi-channel [samples, channels]
-                     current_len = samples.size(0)
-                     if current_len != expected_len:
-                          if current_len > expected_len:
-                              samples = samples[:expected_len, :]
-                          else:
-                              # pad only last dimension (dim 0 is samples in our case for Multi-channel?)
-                              # Wait, NeMo's AudioSegment stores [samples, channels] or [channels, samples]?
-                              # NeMo comments say [num_samples x num_channels].
-                              # pad arguments are (last_dim_left, last_dim_right, 2nd_last_left, ...)
-                              # So for [samples, channels], we want to pad samples (dim 0).
-                              # pad order is reverse. (0, 0) for channels, (0, diff) for samples.
-                              samples = torch.nn.functional.pad(samples, (0, 0, 0, expected_len - current_len))
+        
+        # CRITICAL FIX: Force length alignment if duration is provided
+        # This handles differences in librosa resampling precision across environments AND soundfile reading precision
+        # NeMo's output length matches int(duration * target_sr) exactly (e.g. 199840 for 12.49s @ 16k)
+        if duration is not None and duration > 0:
+            expected_len = int(duration * sample_rate)
+            # Handle different dimensions (samples, channels) or (samples,)
+            if samples.ndim == 1:
+                    current_len = samples.size(0)
+                    if current_len != expected_len:
+                        if current_len > expected_len:
+                            samples = samples[:expected_len]
+                        else:
+                            samples = torch.nn.functional.pad(samples, (0, expected_len - current_len))
+            else: # Multi-channel [samples, channels]
+                    current_len = samples.size(0)
+                    if current_len != expected_len:
+                        if current_len > expected_len:
+                            samples = samples[:expected_len, :]
+                        else:
+                            # pad only last dimension (dim 0 is samples in our case for Multi-channel?)
+                            samples = torch.nn.functional.pad(samples, (0, 0, 0, expected_len - current_len))
 
         self.samples = samples
         self.sample_rate = sample_rate
