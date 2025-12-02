@@ -1,0 +1,15 @@
+# Performance-optimized config: Use NeMo's original encoder for better performance
+# This is a copy of nest_fast-conformer.yaml with encoder using NeMo's original implementation
+# 
+# Usage: Copy this file and modify the encoder target to use NeMo's original implementation
+# 
+# To switch back to NeMo's encoder, change:
+#   encoder:
+#     _target_: modules.conformer_encoder.ConformerEncoder
+# to:
+#   encoder:
+#     _target_: nemo.collections.asr.modules.ConformerEncoder
+#
+# Note: This will use NeMo's optimized implementation which may have better performance
+# but alignment has been verified with the local implementation.
+

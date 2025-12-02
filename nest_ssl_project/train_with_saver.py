@@ -257,6 +257,34 @@ def main(cfg):
     # Initialize from pretrained if specified
     asr_model.maybe_init_from_pretrained_checkpoint(cfg)
     
+    # Load weights from NeMo output if specified (for alignment testing)
+    nemo_weights_path = cfg.get('load_nemo_weights', None)
+    if nemo_weights_path:
+        nemo_weights_path = Path(nemo_weights_path)
+        if nemo_weights_path.exists():
+            if is_global_rank_zero():
+                logger.info(f"Loading weights from NeMo output: {nemo_weights_path}")
+            nemo_weights = torch.load(nemo_weights_path, map_location='cpu', weights_only=False)
+            
+            # Load weights into model
+            model_state_dict = asr_model.state_dict()
+            loaded_count = 0
+            for name, param in nemo_weights.items():
+                if name in model_state_dict:
+                    if model_state_dict[name].shape == param.shape:
+                        model_state_dict[name] = param
+                        loaded_count += 1
+                    else:
+                        if is_global_rank_zero():
+                            logger.warning(f"Shape mismatch for {name}: {model_state_dict[name].shape} vs {param.shape}")
+            
+            asr_model.load_state_dict(model_state_dict)
+            if is_global_rank_zero():
+                logger.info(f"Loaded {loaded_count}/{len(nemo_weights)} weights from NeMo")
+        else:
+            if is_global_rank_zero():
+                logger.warning(f"NeMo weights path does not exist: {nemo_weights_path}")
+    
     # Log training start from rank 0 only
     if is_global_rank_zero():
         logger.info(f"Training started. World size: {trainer.world_size}, Global rank: {trainer.global_rank}")

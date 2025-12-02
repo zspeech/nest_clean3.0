@@ -1,13 +1,13 @@
 @echo off
-REM nest_ssl_project 训练脚本 - 保存输出用于精度对齐 (Windows版本)
+REM NeMo 训练脚本 - 保存输出用于精度对齐 (Windows版本)
+REM 如果 GPU 检测失败，可以手动修改下面的 accelerator 为 "cpu" 或 "cuda"
 
-cd nest_ssl_project
+cd NeMo
 
-python train_with_saver.py ^
-    --config-path config ^
+python examples/asr/speech_pretraining/masked_token_pred_pretrain_with_saver.py ^
     --config-name nest_fast-conformer ^
-    model.train_ds.manifest_filepath=data/dummy_ssl/train_manifest.json ^
-    model.validation_ds.manifest_filepath=data/dummy_ssl/val_manifest.json ^
+    model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json ^
+    model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json ^
     model.train_ds.batch_size=2 ^
     model.validation_ds.batch_size=2 ^
     model.train_ds.num_workers=0 ^
@@ -28,10 +28,9 @@ python train_with_saver.py ^
     trainer.num_sanity_val_steps=0 ^
     exp_manager.resume_if_exists=false ^
     exp_manager.resume_ignore_no_checkpoint=true ^
-    +output_dir=./saved_nest_outputs ^
+    +output_dir=../nest_ssl_project/saved_nemo_outputs ^
     +seed=42 ^
-    +save_steps="0" ^
-    +load_nemo_weights=./saved_nemo_outputs/initial_weights/parameter_weights.pt
+    +save_steps="0"
 
 pause
 

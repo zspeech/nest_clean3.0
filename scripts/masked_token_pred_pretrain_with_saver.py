@@ -124,6 +124,15 @@ class TrainingOutputSaverCallback(pl.Callback):
         logging.info(f"TrainingOutputSaver initialized. Output dir: {self.output_dir}, Seed: {self.seed}")
         if self.save_steps:
             logging.info(f"Will save outputs for steps: {sorted(self.save_steps)}")
+        
+        # Save initial weights (before any training) for alignment testing
+        initial_weights_dir = Path(self.output_dir) / 'initial_weights'
+        initial_weights_dir.mkdir(parents=True, exist_ok=True)
+        param_weights = {}
+        for name, param in pl_module.named_parameters():
+            param_weights[name] = param.detach().cpu().clone()
+        torch.save(param_weights, initial_weights_dir / 'parameter_weights.pt')
+        logging.info(f"Saved initial weights to {initial_weights_dir / 'parameter_weights.pt'}")
     
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         """Save outputs after each training batch."""

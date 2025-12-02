@@ -1,0 +1,4 @@
+# Hybrid configuration: Use NeMo's original encoder for performance,
+# but keep local decoder for alignment verification
+# Copy from nest_fast-conformer.yaml and modify encoder target
+
