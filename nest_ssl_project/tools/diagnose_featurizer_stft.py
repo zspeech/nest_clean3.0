@@ -268,20 +268,46 @@ def main():
             x_masked = torch.where(mask_broadcast, x, torch.zeros_like(x))
             mean = x_masked.sum(dim=1, keepdim=True) / valid_len
             
-            # Std
-            # Variance = sum((x - mean)**2) / (N - 1)
-            diff_sq = (x - mean)**2
-            diff_sq_masked = torch.where(mask_broadcast, diff_sq, torch.zeros_like(diff_sq))
+            # Try Variant 1: Unbiased estimator (standard)
+            # var = diff_sq_masked.sum(dim=1, keepdim=True) / (valid_len - 1)
+            
+            # Try Variant 2: Biased estimator (no -1) - Maybe NeMo used this in older versions?
+            print(f"   Testing Normalization Variants...")
+            
+            variants = {
+                "Standard (N-1)": valid_len - 1,
+                "Biased (N)": valid_len,
+            }
+            
+            for name, denom in variants.items():
+                var_v = diff_sq_masked.sum(dim=1, keepdim=True) / denom
+                std_v = torch.sqrt(var_v) + 1e-5
+                norm_x_v = (x - mean) / std_v
+                norm_x_v = torch.where(mask_broadcast, norm_x_v, torch.zeros_like(norm_x_v))
+                
+                # Compare with actual
+                if nemo_outputs and len(nemo_outputs) >= 2:
+                    actual_out = nemo_outputs[0][0]
+                    # Pad/Truncate logic
+                    if norm_x_v.shape[1] > actual_out.shape[1]:
+                        norm_x_v = norm_x_v[:, :actual_out.shape[1]]
+                    elif norm_x_v.shape[1] < actual_out.shape[1]:
+                        pad_amt = actual_out.shape[1] - norm_x_v.shape[1]
+                        norm_x_v = torch.nn.functional.pad(norm_x_v, (0, pad_amt))
+                    
+                    # Compute diff
+                    diff = (norm_x_v - actual_out).abs().max().item()
+                    print(f"     Variant [{name}]: Max diff = {diff:.6e}")
+                    if diff < 1e-3:
+                        print(f"     >>> MATCH FOUND with {name} <<<")
+
+            # Re-calculate standard for plotting stats
             var = diff_sq_masked.sum(dim=1, keepdim=True) / (valid_len - 1)
             std = torch.sqrt(var) + 1e-5
-            
-            # Normalize
             norm_x = (x - mean) / std
-            
-            # Mask output (padding area should be 0)
             norm_x = torch.where(mask_broadcast, norm_x, torch.zeros_like(norm_x))
             
-            print(f"   Simulated Normalized Output stats (valid region):")
+            print(f"   Simulated Normalized Output stats (valid region, Standard):")
             # Calculate stats only on valid region
             valid_vals = norm_x[:, :valid_len]
             print(f"     mean: {valid_vals.mean().item():.6f}")
