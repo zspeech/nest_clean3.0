@@ -244,6 +244,28 @@ def main():
     print("\nAudio length:")
     compare_outputs("audio_len", nemo_len, nest_len, indent=0)
     
+    # Check featurizer internals (fb, window)
+    print("\n" + "="*80)
+    print("FEATURIZER INTERNALS")
+    print("="*80)
+    
+    if 'preprocessor.featurizer' in nemo_layers and 'preprocessor.featurizer' in nest_layers:
+        print("\nMel Filterbank (fb):")
+        nemo_fb = nemo_layers['preprocessor.featurizer'].get('fb')
+        nest_fb = nest_layers['preprocessor.featurizer'].get('fb')
+        if nemo_fb is not None and nest_fb is not None:
+            compare_outputs("fb", nemo_fb, nest_fb, indent=1)
+        else:
+            print("  Not found in layer outputs")
+            
+        print("\nWindow Function (window):")
+        nemo_window = nemo_layers['preprocessor.featurizer'].get('window')
+        nest_window = nest_layers['preprocessor.featurizer'].get('window')
+        if nemo_window is not None and nest_window is not None:
+            compare_outputs("window", nemo_window, nest_window, indent=1)
+        else:
+            print("  Not found in layer outputs")
+    
     # Check encoder layers
     print("\n" + "="*80)
     print("ENCODER LAYER ANALYSIS")
