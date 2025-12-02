@@ -263,6 +263,23 @@ def main(cfg):
     
     # Create model
     asr_model = EncDecDenoiseMaskedTokenPredModel(cfg=cfg.model, trainer=trainer)
+
+    # FORCE DETERMINISM (Added by aligner)
+    if hasattr(asr_model, 'preprocessor'):
+        if is_global_rank_zero():
+            logger.info("FORCING DETERMINISM ON PREPROCESSOR")
+        if hasattr(asr_model.preprocessor, 'dither'):
+             if is_global_rank_zero(): logger.info(f"  Old dither: {asr_model.preprocessor.dither}")
+             asr_model.preprocessor.dither = 0.0
+             if is_global_rank_zero(): logger.info(f"  New dither: {asr_model.preprocessor.dither}")
+        if hasattr(asr_model.preprocessor, 'pad_to'):
+             if is_global_rank_zero(): logger.info(f"  Old pad_to: {asr_model.preprocessor.pad_to}")
+             asr_model.preprocessor.pad_to = 16
+             if is_global_rank_zero(): logger.info(f"  New pad_to: {asr_model.preprocessor.pad_to}")
+        if hasattr(asr_model.preprocessor, 'mag_power'):
+             if is_global_rank_zero(): logger.info(f"  Old mag_power: {asr_model.preprocessor.mag_power}")
+             asr_model.preprocessor.mag_power = 2.0
+             if is_global_rank_zero(): logger.info(f"  New mag_power: {asr_model.preprocessor.mag_power}")
     
     # Initialize from pretrained if specified
     asr_model.maybe_init_from_pretrained_checkpoint(cfg)
