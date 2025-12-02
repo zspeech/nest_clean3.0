@@ -180,11 +180,19 @@ class FilterbankFeatures(nn.Module):
         IMPORTANT: Must use torch.floor_divide to match NeMo exactly.
         The difference between floor_divide and (float division + floor) can be 1
         in certain cases, which causes all downstream computations to mismatch.
+        
+        Note: This implementation matches NeMo's FilterbankFeatures.get_seq_len exactly.
         """
         # Assuming that center is True if stft_pad_amount = 0
         pad_amount = self.stft_pad_amount * 2 if self.stft_pad_amount is not None else self.n_fft // 2 * 2
-        seq_len = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length)
-        return seq_len.to(dtype=torch.long)
+        
+        # Ensure seq_len is long/int type for floor_divide (matching NeMo behavior)
+        if seq_len.dtype != torch.long and seq_len.dtype != torch.int:
+            seq_len = seq_len.to(dtype=torch.long)
+        
+        # Use floor_divide exactly as NeMo does
+        result = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length)
+        return result.to(dtype=torch.long)
     
     def forward(self, x, seq_len, linear_spec=False):
         """
