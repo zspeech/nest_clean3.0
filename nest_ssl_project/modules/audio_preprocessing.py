@@ -76,7 +76,7 @@ def normalize_batch(x, seq_len, normalize_type):
             torch.sum(torch.where(valid_mask.unsqueeze(1), x - x_mean.unsqueeze(2), zero_val) ** 2, axis=2)
             / (x_mean_denominator.unsqueeze(1) - 1.0)
         )
-        x_std = x_std.masked_fill(x_std.isnan(), 0.0)  # edge case: only 1 frame in denominator
+        x_std = x_std.masked_fill(x_std.isnan(), zero_val)  # edge case: only 1 frame in denominator
         # make sure x_std is not zero
         x_std += CONSTANT
         return (x - x_mean.unsqueeze(2)) / x_std.unsqueeze(2), x_mean, x_std

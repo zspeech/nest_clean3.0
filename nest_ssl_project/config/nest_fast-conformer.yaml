@@ -60,10 +60,10 @@ model:
     # bucketing params
     bucketing_strategy: "synced_randomized"
     bucketing_batch_size: null
-    # batch augmentation
+    # batch augmentation (DISABLED for deterministic alignment)
     batch_augmentor:
       _target_: modules.ssl_modules.augmentation.MultiSpeakerNoiseAugmentation
-      prob: 0.5  # prob of activating the augmentation
+      prob: 0.0  # DISABLED: Set to 0.0 for deterministic alignment with NeMo
       noise_ratio: 0.5  # prob of applying noise aug, otherwise apply speech augmentation (speech_with_ratio = 1 - noise_ratio)
       min_r_speech: -5.0  # min energy ratio (dB) when applying speech augmentation
       max_r_speech: 5.0  # max energy ratio (dB) when applying speech augmentation
@@ -87,10 +87,10 @@ model:
     use_start_end_token: false
     max_duration: 60.0
     min_duration: 1.0
-    # batch augmentation
+    # batch augmentation (DISABLED for deterministic alignment)
     batch_augmentor:
       _target_: modules.ssl_modules.augmentation.MultiSpeakerNoiseAugmentation
-      prob: 0.5
+      prob: 0.0  # DISABLED: Set to 0.0 for deterministic alignment with NeMo
       noise_ratio: 0.5
       min_r_speech: -5.0
       max_r_speech: 5.0
