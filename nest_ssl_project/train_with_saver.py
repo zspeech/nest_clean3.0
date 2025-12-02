@@ -111,6 +111,7 @@ class TrainingOutputSaverCallback(pl.Callback):
         )
         self.saver.setup_hooks(pl_module)
         self.saver.save_model_structure(pl_module)
+        self.saver.save_buffers(pl_module)
         
         # Register hook on decoder to capture forward output (log_probs)
         def decoder_hook(module, input, output):

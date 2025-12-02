@@ -313,6 +313,21 @@ class TrainingOutputSaver:
         
         with open(self.output_dir / 'model_structure.pkl', 'wb') as f:
             pickle.dump(structure, f)
+
+    def save_buffers(self, model: nn.Module):
+        """Save all buffers of the module."""
+        buffer_dir = self.output_dir / "buffers"
+        buffer_dir.mkdir(exist_ok=True)
+        
+        buffers = {}
+        for name, buf in model.named_buffers():
+            buffers[name] = buf.detach().cpu().clone()
+            
+        torch.save(buffers, buffer_dir / "buffers.pt")
+        # Also try to save specifically to layer_outputs structure if possible, or just leave it here.
+        # For diagnose_featurizer.py, it expects them in layer_outputs.pkl under module name.
+        # We can't easily inject into layer_outputs.pkl since that's per step.
+        # But diagnose_featurizer.py can be updated to load buffers.pt.
     
     def finalize(self):
         """Finalize and save metadata."""
