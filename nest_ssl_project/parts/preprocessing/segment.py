@@ -69,10 +69,15 @@ class AudioSegment:
         # NeMo's output length matches int(duration * target_sr) exactly (e.g. 199840 for 12.49s @ 16k)
         if duration is not None and duration > 0:
             expected_len = int(duration * sample_rate)
+            
+            # DEBUG PRINT - FORCE ENABLED FOR DIAGNOSIS
+            print(f"[DEBUG] AudioSegment: current_len={samples.size(0)}, expected_len={expected_len}, duration={duration}, sr={sample_rate}")
+            
             # Handle different dimensions (samples, channels) or (samples,)
             if samples.ndim == 1:
                     current_len = samples.size(0)
                     if current_len != expected_len:
+                        print(f"[DEBUG] MISMATCH! Adjusting length from {current_len} to {expected_len}")
                         if current_len > expected_len:
                             samples = samples[:expected_len]
                         else:
