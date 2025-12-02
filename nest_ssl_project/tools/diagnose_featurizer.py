@@ -249,22 +249,104 @@ def main():
     print("FEATURIZER INTERNALS")
     print("="*80)
     
-    if 'preprocessor.featurizer' in nemo_layers and 'preprocessor.featurizer' in nest_layers:
-        print("\nMel Filterbank (fb):")
+    # Try to load buffers from buffers.pt file
+    nemo_buffers_path = nemo_step_dir.parent / "buffers" / "buffers.pt"
+    nest_buffers_path = nest_step_dir.parent / "buffers" / "buffers.pt"
+    
+    nemo_buffers = None
+    nest_buffers = None
+    
+    if nemo_buffers_path.exists():
+        try:
+            nemo_buffers = torch.load(nemo_buffers_path, map_location='cpu', weights_only=False)
+            print(f"\nLoaded NeMo buffers from {nemo_buffers_path}")
+            print(f"  Available buffer keys ({len(nemo_buffers)}): {list(nemo_buffers.keys())[:10]}...")
+            # List all featurizer-related keys
+            featurizer_keys = [k for k in nemo_buffers.keys() if 'featurizer' in k.lower()]
+            if featurizer_keys:
+                print(f"  Featurizer-related keys: {featurizer_keys}")
+        except Exception as e:
+            print(f"\nFailed to load NeMo buffers: {e}")
+    else:
+        print(f"\nNeMo buffers file not found: {nemo_buffers_path}")
+    
+    if nest_buffers_path.exists():
+        try:
+            nest_buffers = torch.load(nest_buffers_path, map_location='cpu', weights_only=False)
+            print(f"Loaded nest buffers from {nest_buffers_path}")
+            print(f"  Available buffer keys ({len(nest_buffers)}): {list(nest_buffers.keys())[:10]}...")
+            # List all featurizer-related keys
+            featurizer_keys = [k for k in nest_buffers.keys() if 'featurizer' in k.lower()]
+            if featurizer_keys:
+                print(f"  Featurizer-related keys: {featurizer_keys}")
+        except Exception as e:
+            print(f"Failed to load nest buffers: {e}")
+    else:
+        print(f"nest buffers file not found: {nest_buffers_path}")
+    
+    # Helper function to find buffer by partial key match
+    def find_buffer(buffers_dict, partial_key):
+        """Find buffer by partial key match (e.g., 'fb' matches 'preprocessor.featurizer.fb')."""
+        if buffers_dict is None:
+            return None
+        # Try exact match first
+        if partial_key in buffers_dict:
+            return buffers_dict[partial_key]
+        # Try partial match (ends with)
+        for key, value in buffers_dict.items():
+            if key.endswith(f'.{partial_key}') or key == partial_key:
+                return value
+        return None
+    
+    # Compare fb (Mel Filterbank)
+    print("\nMel Filterbank (fb):")
+    nemo_fb = None
+    nest_fb = None
+    
+    if nemo_buffers:
+        nemo_fb = find_buffer(nemo_buffers, 'fb')
+    if nest_buffers:
+        nest_fb = find_buffer(nest_buffers, 'fb')
+    
+    # Also try from layer outputs (old method)
+    if nemo_fb is None and 'preprocessor.featurizer' in nemo_layers:
         nemo_fb = nemo_layers['preprocessor.featurizer'].get('fb')
+    if nest_fb is None and 'preprocessor.featurizer' in nest_layers:
         nest_fb = nest_layers['preprocessor.featurizer'].get('fb')
-        if nemo_fb is not None and nest_fb is not None:
-            compare_outputs("fb", nemo_fb, nest_fb, indent=1)
-        else:
-            print("  Not found in layer outputs")
+    
+    if nemo_fb is not None and nest_fb is not None:
+        compare_outputs("fb", nemo_fb, nest_fb, indent=1)
+    else:
+        print("  fb not found (checked buffers.pt and layer_outputs.pkl)")
+        if nemo_fb is None:
+            print("    NeMo fb: NOT FOUND")
+        if nest_fb is None:
+            print("    nest fb: NOT FOUND")
             
-        print("\nWindow Function (window):")
+    # Compare window
+    print("\nWindow Function (window):")
+    nemo_window = None
+    nest_window = None
+    
+    if nemo_buffers:
+        nemo_window = find_buffer(nemo_buffers, 'window')
+    if nest_buffers:
+        nest_window = find_buffer(nest_buffers, 'window')
+    
+    # Also try from layer outputs (old method)
+    if nemo_window is None and 'preprocessor.featurizer' in nemo_layers:
         nemo_window = nemo_layers['preprocessor.featurizer'].get('window')
+    if nest_window is None and 'preprocessor.featurizer' in nest_layers:
         nest_window = nest_layers['preprocessor.featurizer'].get('window')
-        if nemo_window is not None and nest_window is not None:
-            compare_outputs("window", nemo_window, nest_window, indent=1)
-        else:
-            print("  Not found in layer outputs")
+    
+    if nemo_window is not None and nest_window is not None:
+        compare_outputs("window", nemo_window, nest_window, indent=1)
+    else:
+        print("  window not found (checked buffers.pt and layer_outputs.pkl)")
+        if nemo_window is None:
+            print("    NeMo window: NOT FOUND")
+        if nest_window is None:
+            print("    nest window: NOT FOUND")
     
     # Check encoder layers
     print("\n" + "="*80)
