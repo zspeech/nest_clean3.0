@@ -70,15 +70,24 @@ class AudioSegment:
         if duration is not None and duration > 0:
             expected_len = int(duration * sample_rate)
             
-            # DEBUG PRINT - FORCE ENABLED FOR DIAGNOSIS
-            print(f"[DEBUG] AudioSegment: current_len={samples.size(0)}, expected_len={expected_len}, duration={duration}, sr={sample_rate}")
-            
             # Handle different dimensions (samples, channels) or (samples,)
             if samples.ndim == 1:
                     current_len = samples.size(0)
                     if current_len != expected_len:
-                        print(f"[DEBUG] MISMATCH! Adjusting length from {current_len} to {expected_len}")
                         if current_len > expected_len:
+                            samples = samples[:expected_len]
+                        else:
+                            samples = torch.nn.functional.pad(samples, (0, expected_len - current_len))
+            else: # Multi-channel [samples, channels]
+                    current_len = samples.size(0)
+                    if current_len != expected_len:
+                        if current_len > expected_len:
+                            samples = samples[:expected_len, :]
+                        else:
+                            # pad only last dimension (dim 0 is samples in our case for Multi-channel?)
+                            samples = torch.nn.functional.pad(samples, (0, 0, 0, expected_len - current_len))
+
+        self.samples = samples
                             samples = samples[:expected_len]
                         else:
                             samples = torch.nn.functional.pad(samples, (0, expected_len - current_len))

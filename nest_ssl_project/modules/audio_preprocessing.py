@@ -191,7 +191,7 @@ class FilterbankFeatures(nn.Module):
             seq_len = seq_len.to(dtype=torch.long)
         
         # Use floor_divide exactly as NeMo does
-        result = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length)
+        result = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length) + 1
         return result.to(dtype=torch.long)
     
     def forward(self, x, seq_len, linear_spec=False):
