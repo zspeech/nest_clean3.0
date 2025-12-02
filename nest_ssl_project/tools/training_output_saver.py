@@ -320,10 +320,17 @@ class TrainingOutputSaver:
         buffer_dir.mkdir(exist_ok=True)
         
         buffers = {}
+        buffer_count = 0
         for name, buf in model.named_buffers():
             buffers[name] = buf.detach().cpu().clone()
-            
-        torch.save(buffers, buffer_dir / "buffers.pt")
+            buffer_count += 1
+        
+        buffer_file = buffer_dir / "buffers.pt"
+        torch.save(buffers, buffer_file)
+        
+        # Log success
+        print(f"[TrainingOutputSaver] Saved {buffer_count} buffers to {buffer_file}")
+        
         # Also try to save specifically to layer_outputs structure if possible, or just leave it here.
         # For diagnose_featurizer.py, it expects them in layer_outputs.pkl under module name.
         # We can't easily inject into layer_outputs.pkl since that's per step.

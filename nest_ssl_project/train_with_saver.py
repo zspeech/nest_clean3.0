@@ -21,7 +21,7 @@ from pathlib import Path
 
 # Import local utilities
 from utils.hydra_runner import hydra_runner
-from utils.logging import get_logger
+from utils.logging import get_logger, is_global_rank_zero
 from utils.exp_manager import exp_manager
 
 # Import local model
@@ -112,7 +112,16 @@ class TrainingOutputSaverCallback(pl.Callback):
         self.saver.setup_hooks(pl_module)
         self.saver.save_model_structure(pl_module)
         if hasattr(self.saver, 'save_buffers'):
-            self.saver.save_buffers(pl_module)
+            try:
+                self.saver.save_buffers(pl_module)
+                if is_global_rank_zero():
+                    logger.info(f"Successfully saved buffers to {self.output_dir}/buffers/buffers.pt")
+            except Exception as e:
+                if is_global_rank_zero():
+                    logger.error(f"Failed to save buffers: {e}", exc_info=True)
+        else:
+            if is_global_rank_zero():
+                logger.warning("save_buffers method not found in TrainingOutputSaver")
         
         # Register hook on decoder to capture forward output (log_probs)
         def decoder_hook(module, input, output):
@@ -123,7 +132,6 @@ class TrainingOutputSaverCallback(pl.Callback):
         else:
             self.decoder_hook_handle = None
         
-        from utils.logging import is_global_rank_zero
         if is_global_rank_zero():
             logger.info(f"TrainingOutputSaver initialized. Output dir: {self.output_dir}, Seed: {self.seed}")
             if self.save_steps:

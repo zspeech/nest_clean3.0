@@ -112,7 +112,13 @@ class TrainingOutputSaverCallback(pl.Callback):
         self.saver.setup_hooks(pl_module)
         self.saver.save_model_structure(pl_module)
         if hasattr(self.saver, 'save_buffers'):
-            self.saver.save_buffers(pl_module)
+            try:
+                self.saver.save_buffers(pl_module)
+                logging.info(f"Successfully saved buffers to {self.output_dir}/buffers/buffers.pt")
+            except Exception as e:
+                logging.error(f"Failed to save buffers: {e}", exc_info=True)
+        else:
+            logging.warning("save_buffers method not found in TrainingOutputSaver")
         
         # Register hook on decoder to capture forward output (log_probs)
         def decoder_hook(module, input, output):
