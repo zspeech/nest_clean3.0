@@ -243,6 +243,51 @@ def main():
             nemo_log_mel = torch.log(nemo_mel + log_zero_guard)
             nest_log_mel = torch.log(nest_mel + log_zero_guard)
             compare_tensors("Log mel spectrogram", nemo_log_mel, nest_log_mel, atol=1e-4)
+            
+            # Compare Normalization
+            print("\n7. Normalization (per_feature):")
+            # Simulate normalization on the single sample we computed
+            # Input: [D, T]
+            x = nemo_log_mel
+            seq_len = x.shape[1]
+            
+            # Calculate mean and std manually
+            mean = x.mean(dim=1, keepdim=True)
+            std = x.std(dim=1, keepdim=True)
+            
+            # Note: NeMo's normalize_batch uses a slightly different std calculation (biased estimator + subtract 1 in denom?)
+            # Let's try to match NeMo's logic exactly
+            # x_std = sqrt( sum((x - mean)**2) / (N - 1) )  <-- standard unbiased
+            # NeMo: sqrt( sum(...) / (N - 1) ) + 1e-5
+            
+            norm_x = (x - mean) / (std + 1e-5)
+            
+            print(f"   Simulated Normalized Output stats:")
+            print(f"     mean: {norm_x.mean().item():.6f}")
+            print(f"     std: {norm_x.std().item():.6f}")
+            print(f"     min: {norm_x.min().item():.6f}")
+            print(f"     max: {norm_x.max().item():.6f}")
+            
+            # Compare with actual featurizer output (first sample, unpadded region)
+            if nemo_outputs and len(nemo_outputs) >= 2:
+                actual_out = nemo_outputs[0][0] # First sample
+                actual_len = nemo_outputs[1][0].item()
+                
+                # Slice actual output to valid length
+                actual_out_valid = actual_out[:, :actual_len]
+                
+                # Compare shapes
+                print(f"   Comparing simulated vs actual:")
+                print(f"     Simulated shape: {norm_x.shape}")
+                print(f"     Actual valid shape: {actual_out_valid.shape}")
+                
+                if norm_x.shape == actual_out_valid.shape:
+                    compare_tensors("Simulated vs Actual NeMo Output", norm_x, actual_out_valid, atol=1e-3)
+                else:
+                    print("     [SKIP] Shape mismatch, cannot compare directly")
+
+    else:
+        print("   Skipping STFT comparison due to computation failure.")
     else:
         print("   Skipping STFT comparison due to computation failure.")
     
