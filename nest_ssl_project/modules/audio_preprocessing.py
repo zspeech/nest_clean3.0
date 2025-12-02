@@ -268,8 +268,12 @@ class FilterbankFeatures(nn.Module):
         mask = torch.arange(max_len, device=x.device)
         mask = mask.repeat(x.size(0), 1) >= seq_len.unsqueeze(1)
         x = x.masked_fill(mask.unsqueeze(1).type(torch.bool).to(device=x.device), self.pad_value)
+        del mask
         
-        if self.pad_to > 0:
+        if self.pad_to == "max":
+             # Not implemented in local version, but keeping structure
+             pass
+        elif self.pad_to > 0:
             pad_amt = x.size(-1) % self.pad_to
             if pad_amt != 0:
                 x = F.pad(x, (0, self.pad_to - pad_amt), value=self.pad_value)
