@@ -242,7 +242,8 @@ def main():
             log_zero_guard = 2**-24
             nemo_log_mel = torch.log(nemo_mel + log_zero_guard)
             nest_log_mel = torch.log(nest_mel + log_zero_guard)
-            compare_tensors("Log mel spectrogram", nemo_log_mel, nest_log_mel, atol=1e-4)
+            print("   Checking Log Mel with high precision (1e-7)...")
+            compare_tensors("Log mel spectrogram", nemo_log_mel, nest_log_mel, atol=1e-7)
             
             # Compare Normalization
             print("\n7. Normalization (per_feature):")
