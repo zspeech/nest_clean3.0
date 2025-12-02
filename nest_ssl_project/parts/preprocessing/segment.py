@@ -30,14 +30,39 @@ class AudioSegment:
     Simplified audio segment class for loading and processing audio files.
     """
     
-    def __init__(self, samples: torch.Tensor, sample_rate: int):
+    def __init__(self, samples: torch.Tensor, sample_rate: int, target_sr: Optional[int] = None):
         """
         Initialize audio segment.
         
         Args:
             samples: Audio samples as torch tensor
             sample_rate: Sample rate in Hz
+            target_sr: Target sample rate for resampling (None to keep original)
         """
+        # Resample if needed (matching NeMo's behavior in __init__)
+        if target_sr is not None and target_sr != sample_rate:
+            # Convert to numpy for librosa resampling
+            if isinstance(samples, torch.Tensor):
+                samples_np = samples.cpu().numpy()
+            else:
+                samples_np = samples
+            
+            # Handle multi-channel audio (librosa expects channels-first for multi-channel)
+            if samples_np.ndim == 1:
+                # Single channel: resample directly
+                samples_np = librosa.resample(samples_np, orig_sr=sample_rate, target_sr=target_sr)
+            elif samples_np.ndim == 2:
+                # Multi-channel: transpose for librosa (channels-first), resample, transpose back
+                samples_np = samples_np.transpose()
+                samples_np = librosa.resample(samples_np, orig_sr=sample_rate, target_sr=target_sr)
+                samples_np = samples_np.transpose()
+            else:
+                raise ValueError(f"Unsupported audio shape: {samples_np.shape}")
+            
+            # Convert back to torch tensor
+            samples = torch.from_numpy(samples_np).float()
+            sample_rate = target_sr
+        
         self.samples = samples
         self.sample_rate = sample_rate
     
@@ -104,19 +129,15 @@ class AudioSegment:
                 # If both fail, raise with combined error message
                 raise RuntimeError(f"Failed to load audio from {audio_file}: soundfile error={e}, librosa error={librosa_e}")
         
-        # Resample if needed (optimize: only resample if necessary)
-        if target_sr is not None and target_sr != sr:
-            samples = librosa.resample(samples, orig_sr=sr, target_sr=target_sr)
-            sr = target_sr
-        
-        # Optimize: convert numpy array to torch tensor once (avoid double conversion)
+        # Convert to torch tensor (resampling will be done in __init__)
         # Use from_numpy for better performance (shares memory if possible)
         if isinstance(samples, np.ndarray):
             samples = torch.from_numpy(samples).float()
         else:
             samples = torch.tensor(samples, dtype=torch.float32)
         
-        return cls(samples=samples, sample_rate=sr)
+        # Pass target_sr to __init__ for resampling (matching NeMo's behavior)
+        return cls(samples=samples, sample_rate=sr, target_sr=target_sr)
 
 
 # Export available formats from soundfile
