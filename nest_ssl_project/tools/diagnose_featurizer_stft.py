@@ -168,61 +168,83 @@ def main():
     print("\n5. Manual STFT Computation:")
     print("   Computing STFT manually to check intermediate results...")
     
-    # Get STFT parameters from buffers (assuming standard values)
+    # Get STFT parameters from buffers
     n_fft = 512
     hop_length = 160
-    win_length = 320
+    
+    # Detect win_length from window buffer
+    if nemo_window is not None:
+        win_length = nemo_window.numel()
+        print(f"   Detected win_length from buffer: {win_length}")
+    else:
+        win_length = 320
+        print(f"   Using default win_length: {win_length}")
     
     # Compute STFT manually
-    nemo_stft = torch.stft(
-        nemo_audio[0],  # First sample
-        n_fft=n_fft,
-        hop_length=hop_length,
-        win_length=win_length,
-        center=True,  # Assuming exact_pad=False
-        window=nemo_window.squeeze(0) if nemo_window is not None else None,
-        return_complex=True,
-        pad_mode="constant",
-    )
+    try:
+        nemo_stft = torch.stft(
+            nemo_audio[0],  # First sample
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            center=True,  # Assuming exact_pad=False
+            window=nemo_window.squeeze(0) if nemo_window is not None else None,
+            return_complex=True,
+            pad_mode="constant",
+        )
+    except Exception as e:
+        print(f"   NeMo STFT computation failed: {e}")
+        nemo_stft = None
+
+    try:
+        nest_stft = torch.stft(
+            nest_audio[0],  # First sample
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            center=True,  # Assuming exact_pad=False
+            window=nest_window.squeeze(0) if nest_window is not None else None,
+            return_complex=True,
+            pad_mode="constant",
+        )
+    except Exception as e:
+        print(f"   nest STFT computation failed: {e}")
+        nest_stft = None
     
-    nest_stft = torch.stft(
-        nest_audio[0],  # First sample
-        n_fft=n_fft,
-        hop_length=hop_length,
-        win_length=win_length,
-        center=True,  # Assuming exact_pad=False
-        window=nest_window.squeeze(0) if nest_window is not None else None,
-        return_complex=True,
-        pad_mode="constant",
-    )
-    
-    # Compare complex STFT
-    print("   Comparing complex STFT output...")
-    compare_tensors("STFT (real)", nemo_stft.real, nest_stft.real, atol=1e-4)
-    compare_tensors("STFT (imag)", nemo_stft.imag, nest_stft.imag, atol=1e-4)
-    
-    # Compare magnitude
-    nemo_mag = torch.sqrt(nemo_stft.real.pow(2) + nemo_stft.imag.pow(2))
-    nest_mag = torch.sqrt(nest_stft.real.pow(2) + nest_stft.imag.pow(2))
-    compare_tensors("Magnitude", nemo_mag, nest_mag, atol=1e-4)
-    
-    # Compare power spectrum
-    nemo_power = nemo_mag.pow(2.0)
-    nest_power = nest_mag.pow(2.0)
-    compare_tensors("Power spectrum", nemo_power, nest_power, atol=1e-4)
-    
-    # Compare mel filterbank application
-    print("\n6. Mel Filterbank Application:")
-    if nemo_fb is not None and nest_fb is not None:
-        nemo_mel = torch.matmul(nemo_fb.squeeze(0), nemo_power)
-        nest_mel = torch.matmul(nest_fb.squeeze(0), nest_power)
-        compare_tensors("Mel spectrogram (before log)", nemo_mel, nest_mel, atol=1e-4)
+    if nemo_stft is not None and nest_stft is not None:
+        # Compare complex STFT
+        print("   Comparing complex STFT output...")
+        compare_tensors("STFT (real)", nemo_stft.real, nest_stft.real, atol=1e-4)
+        compare_tensors("STFT (imag)", nemo_stft.imag, nest_stft.imag, atol=1e-4)
         
-        # Compare log
-        log_zero_guard = 2**-24
-        nemo_log_mel = torch.log(nemo_mel + log_zero_guard)
-        nest_log_mel = torch.log(nest_mel + log_zero_guard)
-        compare_tensors("Log mel spectrogram", nemo_log_mel, nest_log_mel, atol=1e-4)
+        # Compare magnitude
+        nemo_mag = torch.sqrt(nemo_stft.real.pow(2) + nemo_stft.imag.pow(2))
+        nest_mag = torch.sqrt(nest_stft.real.pow(2) + nest_stft.imag.pow(2))
+        compare_tensors("Magnitude", nemo_mag, nest_mag, atol=1e-4)
+        
+        # Compare power spectrum
+        nemo_power = nemo_mag.pow(2.0)
+        nest_power = nest_mag.pow(2.0)
+        compare_tensors("Power spectrum", nemo_power, nest_power, atol=1e-4)
+        
+        # Compare mel filterbank application
+        print("\n6. Mel Filterbank Application:")
+        if nemo_fb is not None and nest_fb is not None:
+            # fb is usually [1, n_mels, n_fft//2 + 1], power is [n_fft//2 + 1, T]
+            # Need to squeeze fb to [n_mels, n_fft//2 + 1]
+            fb_tensor = nemo_fb.squeeze(0) if nemo_fb.dim() == 3 else nemo_fb
+            
+            nemo_mel = torch.matmul(fb_tensor, nemo_power)
+            nest_mel = torch.matmul(fb_tensor, nest_power) # Use same fb for fair comparison
+            compare_tensors("Mel spectrogram (before log)", nemo_mel, nest_mel, atol=1e-4)
+            
+            # Compare log
+            log_zero_guard = 2**-24
+            nemo_log_mel = torch.log(nemo_mel + log_zero_guard)
+            nest_log_mel = torch.log(nest_mel + log_zero_guard)
+            compare_tensors("Log mel spectrogram", nemo_log_mel, nest_log_mel, atol=1e-4)
+    else:
+        print("   Skipping STFT comparison due to computation failure.")
     
     print("\n" + "="*80)
     print("Diagnosis complete.")
