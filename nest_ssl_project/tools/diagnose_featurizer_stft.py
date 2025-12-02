@@ -281,13 +281,18 @@ def main():
                 print(f"     Simulated shape: {norm_x.shape}")
                 print(f"     Actual valid shape: {actual_out_valid.shape}")
                 
+                # Slice norm_x to match actual_out_valid length if necessary
+                if norm_x.shape[1] != actual_out_valid.shape[1]:
+                    print(f"     [INFO] Trimming shapes to match for comparison")
+                    min_len = min(norm_x.shape[1], actual_out_valid.shape[1])
+                    norm_x = norm_x[:, :min_len]
+                    actual_out_valid = actual_out_valid[:, :min_len]
+                
                 if norm_x.shape == actual_out_valid.shape:
                     compare_tensors("Simulated vs Actual NeMo Output", norm_x, actual_out_valid, atol=1e-3)
                 else:
                     print("     [SKIP] Shape mismatch, cannot compare directly")
 
-    else:
-        print("   Skipping STFT comparison due to computation failure.")
     else:
         print("   Skipping STFT comparison due to computation failure.")
     
