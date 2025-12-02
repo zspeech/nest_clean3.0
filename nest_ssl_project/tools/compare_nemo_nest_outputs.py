@@ -444,7 +444,7 @@ def compare_step_outputs(
                     nest_val = nest_tensors[key]
                     if isinstance(nemo_val, torch.Tensor) and isinstance(nest_val, torch.Tensor):
                         comp = compare_tensors(nemo_val, nest_val, f'batch.{key}', atol, rtol)
-                        match_str = "✓" if comp['match'] else "✗"
+                        match_str = "[OK]" if comp['match'] else "[FAIL]"
                         print(f"    {match_str} {key}:")
                         print(f"      NeMo shape: {list(nemo_val.shape)}, dtype: {nemo_val.dtype}")
                         print(f"      nest shape: {list(nest_val.shape)}, dtype: {nest_val.dtype}")
@@ -458,7 +458,7 @@ def compare_step_outputs(
                                 print(f"      NeMo sample (first 5): {nemo_val.flatten()[:5].tolist()}")
                                 print(f"      nest sample (first 5): {nest_val.flatten()[:5].tolist()}")
                     else:
-                        match_str = "✓" if nemo_val == nest_val else "✗"
+                        match_str = "[OK]" if nemo_val == nest_val else "[FAIL]"
                         print(f"    {match_str} {key}: {type(nemo_val).__name__} vs {type(nest_val).__name__}")
             
             if batch_comparison.get('max_abs_diff') is not None:
@@ -615,9 +615,9 @@ def compare_step_outputs(
         
         if output_comparison['match']:
             layer_match_count += 1
-            match_str = "✓"
+            match_str = "[OK]"
         else:
-            match_str = "✗"
+            match_str = "[FAIL]"
             if first_mismatch_layer is None:
                 first_mismatch_layer = layer_name
         
@@ -825,7 +825,7 @@ def main():
         sys.stdout.flush()
         sys.stdout = original_stdout
         output_file_handle.close()
-        print(f"\n✓ Comparison results saved to: {output_file_path}")
+        print(f"\n[OK] Comparison results saved to: {output_file_path}")
     
     # Save comparison results if requested
     if args.save_comparison:
