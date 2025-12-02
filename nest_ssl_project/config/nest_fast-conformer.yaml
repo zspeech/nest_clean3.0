@@ -62,7 +62,7 @@ model:
     bucketing_batch_size: null
     # batch augmentation
     batch_augmentor:
-      _target_: nemo.collections.asr.modules.ssl_modules.MultiSpeakerNoiseAugmentation
+      _target_: modules.ssl_modules.augmentation.MultiSpeakerNoiseAugmentation
       prob: 0.5  # prob of activating the augmentation
       noise_ratio: 0.5  # prob of applying noise aug, otherwise apply speech augmentation (speech_with_ratio = 1 - noise_ratio)
       min_r_speech: -5.0  # min energy ratio (dB) when applying speech augmentation
@@ -89,7 +89,7 @@ model:
     min_duration: 1.0
     # batch augmentation
     batch_augmentor:
-      _target_: nemo.collections.asr.modules.ssl_modules.MultiSpeakerNoiseAugmentation
+      _target_: modules.ssl_modules.augmentation.MultiSpeakerNoiseAugmentation
       prob: 0.5
       noise_ratio: 0.5
       min_r_speech: -5.0
@@ -104,7 +104,7 @@ model:
       max_num_speakers: 1  # max num of extra speakers to add
 
   preprocessor:
-    _target_: nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor
+    _target_: modules.audio_preprocessing.AudioToMelSpectrogramPreprocessor
     sample_rate: ${model.sample_rate}
     normalize: "per_feature"
     window_size: 0.025
@@ -120,14 +120,14 @@ model:
 
   # spec_augment is not actually used, just to avoid init error
   spec_augment:
-    _target_: nemo.collections.asr.modules.SpectrogramAugmentation
+    _target_: modules.audio_preprocessing.SpectrogramAugmentation
     freq_masks: 0 # set to zero to disable it
     time_masks: 0 # set to zero to disable it
     freq_width: 27
     time_width: 0.05
 
   masking:
-    _target_: nemo.collections.asr.modules.RandomBlockMasking
+    _target_: modules.ssl_modules.masking.RandomBlockMasking
     block_size: 40  # for pre_conv masking, 10ms per frame, 400ms per block with block_size=40
     mask_prob: 0.01  # for allow_overlap=True, this means the mask prob for each frame; otherwise it means the overall masked proportion
     feat_in: ${model.preprocessor.features}
@@ -135,7 +135,7 @@ model:
     allow_overlap: true
 
   quantizer:
-    _target_: nemo.collections.asr.modules.RandomProjectionVectorQuantizer
+    _target_: modules.ssl_modules.quantizers.RandomProjectionVectorQuantizer
     feat_in: ${model.preprocessor.features}
     code_dim: ${model.code_dim}
     num_books: ${model.num_books}
@@ -205,7 +205,7 @@ model:
     use_bias: true
 
   loss:
-    _target_: nemo.collections.asr.losses.MultiMLMLoss
+    _target_: losses.ssl_losses.mlm.MultiMLMLoss
     combine_time_steps: ${model.encoder.subsampling_factor}  # conformer sub-sampling ratio for 'pre_conv', 1 for 'post_conv'
     mask_threshold: 0.8
     num_decoders: ${model.num_books}
