@@ -42,34 +42,51 @@ CONSTANT = 1e-5
 
 def normalize_batch(x, seq_len, normalize_type):
     """Normalize batch following NeMo's implementation."""
+    x_mean = None
+    x_std = None
     if normalize_type == "per_feature":
         batch_size = x.shape[0]
         max_time = x.shape[2]
         
+        # When doing stream capture to a graph, item() is not allowed
+        # because it calls cudaStreamSynchronize(). Therefore, we are
+        # sacrificing some error checking when running with cuda graphs.
+        if (
+            torch.cuda.is_available()
+            and not torch.cuda.is_current_stream_capturing()
+            and torch.any(seq_len == 1).item()
+        ):
+            raise ValueError(
+                "normalize_batch with `per_feature` normalize_type received a tensor of length 1. This will result "
+                "in torch.std() returning nan. Make sure your audio length has enough samples for a single "
+                "feature (ex. at least `hop_length` for Mel Spectrograms)."
+            )
         time_steps = torch.arange(max_time, device=x.device).unsqueeze(0).expand(batch_size, max_time)
         valid_mask = time_steps < seq_len.unsqueeze(1)
-        
         x_mean_numerator = torch.where(valid_mask.unsqueeze(1), x, 0.0).sum(axis=2)
         x_mean_denominator = valid_mask.sum(axis=1)
         x_mean = x_mean_numerator / x_mean_denominator.unsqueeze(1)
         
+        # Subtract 1 in the denominator to correct for the bias.
         x_std = torch.sqrt(
             torch.sum(torch.where(valid_mask.unsqueeze(1), x - x_mean.unsqueeze(2), 0.0) ** 2, axis=2)
             / (x_mean_denominator.unsqueeze(1) - 1.0)
         )
-        x_std = x_std.masked_fill(x_std.isnan(), 0.0)
+        x_std = x_std.masked_fill(x_std.isnan(), 0.0)  # edge case: only 1 frame in denominator
+        # make sure x_std is not zero
         x_std += CONSTANT
-        return (x - x_mean.unsqueeze(2)) / x_std.unsqueeze(2)
+        return (x - x_mean.unsqueeze(2)) / x_std.unsqueeze(2), x_mean, x_std
     elif normalize_type == "all_features":
         x_mean = torch.zeros(seq_len.shape, dtype=x.dtype, device=x.device)
         x_std = torch.zeros(seq_len.shape, dtype=x.dtype, device=x.device)
         for i in range(x.shape[0]):
             x_mean[i] = x[i, :, : seq_len[i].item()].mean()
             x_std[i] = x[i, :, : seq_len[i].item()].std()
+        # make sure x_std is not zero
         x_std += CONSTANT
-        return (x - x_mean.view(-1, 1, 1)) / x_std.view(-1, 1, 1)
+        return (x - x_mean.view(-1, 1, 1)) / x_std.view(-1, 1, 1), x_mean, x_std
     else:
-        return x
+        return x, x_mean, x_std
 
 
 class FilterbankFeatures(nn.Module):
@@ -261,7 +278,7 @@ class FilterbankFeatures(nn.Module):
         
         # Normalize
         if self.normalize:
-            x = normalize_batch(x, seq_len, normalize_type=self.normalize)
+            x, _, _ = normalize_batch(x, seq_len, normalize_type=self.normalize)
         
         # Mask and pad
         max_len = x.size(-1)
