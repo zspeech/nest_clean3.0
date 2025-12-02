@@ -63,41 +63,25 @@ class ForwardBackwardHook:
             )
     
     def backward_hook(self, module, grad_input, grad_output):
-        """Backward hook to capture gradients (for register_full_backward_hook)."""
-        # NOTE: We avoid capturing grad_output to prevent inplace modification errors.
-        # grad_output may be views that get modified inplace by subsequent operations (e.g., ReLU),
-        # which causes RuntimeError even when we clone immediately.
-        # Instead, we only capture grad_input and rely on parameter gradients saved in save_step().
+        """Backward hook to capture gradients (for register_full_backward_hook).
         
-        # Capture grad_input only (safer, less likely to cause inplace errors)
-        if isinstance(grad_input, tuple):
-            self.backward_input_grads.append([
-                g.detach().clone().cpu() if isinstance(g, torch.Tensor) and g is not None else None
-                for g in grad_input
-            ])
-        else:
-            self.backward_input_grads.append(
-                grad_input.detach().clone().cpu() if isinstance(grad_input, torch.Tensor) and grad_input is not None else None
-            )
-        
-        # Do NOT capture grad_output to avoid inplace modification errors
-        # Parameter gradients are already captured in save_step() via param.grad
-        
-        # Return None to use original gradients (don't modify gradient flow)
+        NOTE: This hook is disabled by default to avoid inplace modification errors.
+        Even capturing grad_input can cause issues when tensors are views that get
+        modified inplace by subsequent operations (e.g., ReLU).
+        We rely on parameter gradients captured via param.grad in save_step() instead.
+        """
+        # Do not capture anything to avoid inplace modification errors
+        # Parameter gradients are captured in save_step() via param.grad
         return None
     
     def register(self, module):
         """Register hooks on module."""
         self.forward_hook_handle = module.register_forward_hook(self.forward_hook)
-        # Only register backward hook if we want to capture grad_input
-        # Note: We avoid capturing grad_output to prevent inplace modification errors
-        try:
-            self.backward_hook_handle = module.register_full_backward_hook(self.backward_hook)
-        except Exception as e:
-            # If backward hook registration fails, continue without it
-            # Parameter gradients will still be captured in save_step()
-            print(f"Warning: Failed to register backward hook: {e}")
-            self.backward_hook_handle = None
+        # DISABLED: Do not register backward hook to avoid inplace modification errors
+        # Even capturing grad_input can cause RuntimeError when tensors are views
+        # that get modified inplace (e.g., ReLU inplace operations).
+        # Parameter gradients are still captured in save_step() via param.grad
+        self.backward_hook_handle = None
     
     def remove(self):
         """Remove hooks."""
@@ -183,6 +167,7 @@ class TrainingOutputSaver:
         loss: torch.Tensor,
         save_batch: bool = True,
         save_weights: bool = False,
+        force_save: bool = False,
     ):
         """
         Save outputs for a training step.
@@ -194,15 +179,17 @@ class TrainingOutputSaver:
             loss: Loss tensor
             save_batch: Whether to save batch data (default: True)
             save_weights: Whether to save model weights (default: False, set True after optimizer.step())
+            force_save: If True, skip the should_save check (default: False)
         """
-        # Check if we should save this step
-        should_save = (
-            step < self.save_first_n_steps or
-            step % self.save_every_n_steps == 0
-        )
-        
-        if not should_save:
-            return
+        # Check if we should save this step (unless force_save is True)
+        if not force_save:
+            should_save = (
+                step < self.save_first_n_steps or
+                step % self.save_every_n_steps == 0
+            )
+            
+            if not should_save:
+                return
         
         step_dir = self.output_dir / f"step_{step}"
         step_dir.mkdir(exist_ok=True)
@@ -210,7 +197,25 @@ class TrainingOutputSaver:
         # Save batch data
         if save_batch:
             batch_data = {}
-            if isinstance(batch, (list, tuple)):
+            # Handle AudioNoiseBatch (dataclass) or similar custom batch types
+            if hasattr(batch, '__dict__') or hasattr(type(batch), '__annotations__'):
+                # Extract all tensor fields from batch object
+                for attr in ['audio', 'audio_len', 'noise', 'noise_len', 'noisy_audio', 'noisy_audio_len', 'sample_id']:
+                    if hasattr(batch, attr):
+                        val = getattr(batch, attr)
+                        if isinstance(val, torch.Tensor):
+                            batch_data[attr] = val.detach().cpu().clone()
+                        else:
+                            batch_data[attr] = val
+                # Also save all __dict__ attributes
+                if hasattr(batch, '__dict__'):
+                    for k, v in batch.__dict__.items():
+                        if k not in batch_data:
+                            if isinstance(v, torch.Tensor):
+                                batch_data[k] = v.detach().cpu().clone()
+                            else:
+                                batch_data[k] = v
+            elif isinstance(batch, (list, tuple)):
                 batch_data = {
                     f'batch_{i}': x.detach().cpu().clone() if isinstance(x, torch.Tensor) else x
                     for i, x in enumerate(batch)

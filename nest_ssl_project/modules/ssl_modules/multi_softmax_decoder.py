@@ -16,37 +16,36 @@
 from collections import OrderedDict
 
 import torch
-
-import torch
 from core.classes.neural_module import NeuralModule
 from core.classes.common import typecheck
 from core.neural_types import AcousticEncodedRepresentation, LogprobsType, NeuralType
 
-# Simple weight initialization function
+# Weight initialization function matching NeMo's implementation
 def init_weights(m, mode='xavier_uniform'):
-    """Initialize weights for a module."""
-    if isinstance(m, torch.nn.Linear):
-        if mode == 'xavier_uniform':
-            torch.nn.init.xavier_uniform_(m.weight)
-        elif mode == 'xavier_normal':
-            torch.nn.init.xavier_normal_(m.weight)
-        elif mode == 'kaiming_uniform':
-            torch.nn.init.kaiming_uniform_(m.weight)
-        elif mode == 'kaiming_normal':
-            torch.nn.init.kaiming_normal_(m.weight)
-        if m.bias is not None:
-            torch.nn.init.constant_(m.bias, 0)
-    elif isinstance(m, torch.nn.Conv1d):
-        if mode == 'xavier_uniform':
-            torch.nn.init.xavier_uniform_(m.weight)
-        elif mode == 'xavier_normal':
-            torch.nn.init.xavier_normal_(m.weight)
-        elif mode == 'kaiming_uniform':
-            torch.nn.init.kaiming_uniform_(m.weight)
-        elif mode == 'kaiming_normal':
-            torch.nn.init.kaiming_normal_(m.weight)
-        if m.bias is not None:
-            torch.nn.init.constant_(m.bias, 0)
+    """
+    Initialize weights for a module.
+    Matches NeMo's init_weights from nemo.collections.asr.parts.submodules.jasper
+    """
+    if isinstance(m, (torch.nn.Conv1d, torch.nn.Linear)):
+        if mode is not None:
+            if mode == 'xavier_uniform':
+                torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
+            elif mode == 'xavier_normal':
+                torch.nn.init.xavier_normal_(m.weight, gain=1.0)
+            elif mode == 'kaiming_uniform':
+                torch.nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
+            elif mode == 'kaiming_normal':
+                torch.nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+            else:
+                raise ValueError("Unknown Initialization mode: {0}".format(mode))
+    elif isinstance(m, torch.nn.BatchNorm1d):
+        if m.track_running_stats:
+            m.running_mean.zero_()
+            m.running_var.fill_(1)
+            m.num_batches_tracked.zero_()
+        if m.affine:
+            torch.nn.init.ones_(m.weight)
+            torch.nn.init.zeros_(m.bias)
 
 
 class MultiSoftmaxDecoder(NeuralModule):

@@ -69,7 +69,8 @@ class RandomProjectionVectorQuantizer(NeuralModule, Exportable):
         torch.nn.init.xavier_normal_(self.proj.weight)
 
         # (num_books, num_classes, hid_dim)
-        codebooks = torch.randn(self.num_books, self.num_classes, self.code_dim, dtype=torch.float32)
+        # Use double() to match NeMo's implementation (float64)
+        codebooks = torch.randn(self.num_books, self.num_classes, self.code_dim).double()
         torch.nn.init.normal_(codebooks, mean=0, std=1)
         codebooks = F.normalize(codebooks, dim=-1)
         self.codebooks = nn.Parameter(codebooks)

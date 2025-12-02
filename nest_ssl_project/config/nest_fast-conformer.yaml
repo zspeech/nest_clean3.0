@@ -114,7 +114,7 @@ model:
     n_fft: 512
     log: true
     frame_splicing: 1
-    dither: 0.00001
+    dither: 0.0  # Disabled for deterministic alignment
     pad_to: 16
     pad_value: 0.0
 
@@ -146,7 +146,7 @@ model:
     combine_time_steps: ${model.encoder.subsampling_factor}  # conformer sub-sampling ratio
   
   encoder:
-    _target_: nemo.collections.asr.modules.ConformerEncoder
+    _target_: modules.conformer_encoder.ConformerEncoder
     feat_in: ${model.preprocessor.features}
     feat_out: -1 # you may set it if you need different output size other than the default d_model
     n_layers: 17
@@ -197,7 +197,7 @@ model:
     stochastic_depth_start_layer: 1
 
   decoder:
-    _target_: nemo.collections.asr.modules.MultiSoftmaxDecoder
+    _target_: modules.ssl_modules.multi_softmax_decoder.MultiSoftmaxDecoder
     feat_in: ${model.encoder.d_model}
     num_classes: ${model.num_classes}
     num_decoders: ${model.num_books}

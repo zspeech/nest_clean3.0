@@ -63,7 +63,8 @@ class MultiHeadAttention(nn.Module):
         """Compute attention context vector."""
         n_batch = value.size(0)
         if mask is not None:
-            mask = mask.unsqueeze(1).eq(0)  # (batch, 1, time2, time2)
+            # NeMo's mask format: True indicates positions to mask (padding positions)
+            mask = mask.unsqueeze(1)  # (batch, 1, time1, time2)
             scores = scores.masked_fill(mask, -INF_VAL)
             attn = torch.softmax(scores, dim=-1).masked_fill(mask, 0.0)  # (batch, head, time1, time2)
         else:
@@ -129,7 +130,7 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
         x = x[:, :, 1:].view(b, h, qlen, pos_len)  # (b, h, t1, t2)
         return x
     
-    def forward(self, query, key, value, mask=None, pos_emb=None, cache=None):
+    def forward(self, query, key, value, mask, pos_emb, cache=None):
         """Compute 'Scaled Dot Product Attention' with rel. positional encoding.
         Args:
             query (torch.Tensor): (batch, time1, size)
