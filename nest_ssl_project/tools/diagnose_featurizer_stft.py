@@ -372,13 +372,47 @@ def main():
                 # Compare results
                 compare_tensors("normalize_batch result (NeMo vs nest)", nemo_norm_result, nest_norm_result, atol=1e-4)
                 
+                # Apply padding to normalize_batch output to match actual featurizer output
+                # First, apply masking (same as in FilterbankFeatures.forward)
+                pad_value = 0.0  # Default pad_value
+                max_len = nemo_norm_result.size(-1)
+                mask = torch.arange(max_len, device=nemo_norm_result.device)
+                mask = mask.repeat(nemo_norm_result.size(0), 1) >= nemo_seq_len_batch.unsqueeze(1)
+                nemo_norm_result_padded = nemo_norm_result.masked_fill(
+                    mask.unsqueeze(1).type(torch.bool).to(device=nemo_norm_result.device), pad_value
+                )
+                nest_norm_result_padded = nest_norm_result.masked_fill(
+                    mask.unsqueeze(1).type(torch.bool).to(device=nest_norm_result.device), pad_value
+                )
+                
+                # Apply pad_to padding (pad_to=16)
+                pad_to = 16
+                pad_amt_nemo = nemo_norm_result_padded.size(-1) % pad_to
+                if pad_amt_nemo != 0:
+                    nemo_norm_result_padded = torch.nn.functional.pad(
+                        nemo_norm_result_padded, (0, pad_to - pad_amt_nemo), value=pad_value
+                    )
+                pad_amt_nest = nest_norm_result_padded.size(-1) % pad_to
+                if pad_amt_nest != 0:
+                    nest_norm_result_padded = torch.nn.functional.pad(
+                        nest_norm_result_padded, (0, pad_to - pad_amt_nest), value=pad_value
+                    )
+                
+                print(f"\n   After padding:")
+                print(f"     NeMo padded shape: {nemo_norm_result_padded.shape}")
+                print(f"     nest padded shape: {nest_norm_result_padded.shape}")
+                
                 # Compare with actual outputs
                 actual_nemo_out = nemo_outputs[0][:1]  # First sample [1, D, T]
                 actual_nest_out = nest_outputs[0][:1]  # First sample [1, D, T]
                 
-                print(f"\n   Comparing normalize_batch output with actual featurizer output:")
-                compare_tensors("normalize_batch vs Actual NeMo", nemo_norm_result, actual_nemo_out, atol=1e-4)
-                compare_tensors("normalize_batch vs Actual nest", nest_norm_result, actual_nest_out, atol=1e-4)
+                print(f"\n   Comparing padded normalize_batch output with actual featurizer output:")
+                compare_tensors("Padded normalize_batch vs Actual NeMo", nemo_norm_result_padded, actual_nemo_out, atol=1e-4)
+                compare_tensors("Padded normalize_batch vs Actual nest", nest_norm_result_padded, actual_nest_out, atol=1e-4)
+                
+                # Also compare NeMo vs nest after padding
+                print(f"\n   Comparing NeMo vs nest after padding:")
+                compare_tensors("NeMo vs nest (after padding)", nemo_norm_result_padded, nest_norm_result_padded, atol=1e-4)
                 
             except Exception as e:
                 print(f"   Error in manual normalize_batch test: {e}")
