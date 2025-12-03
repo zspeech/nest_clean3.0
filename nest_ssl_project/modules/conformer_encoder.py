@@ -203,17 +203,12 @@ def calc_length(lengths, all_paddings, kernel_size, stride, ceil_mode, repeat_nu
 
 
 def apply_channel_mask(tensor, mask):
-    """Apply mask to tensor with channel dimension.
-    
-    Note: Cannot use inplace operation (mul_) here because the tensor may be needed
-    for gradient computation in backward pass. Using regular multiplication with
-    broadcasting instead.
-    """
+    """Apply mask to tensor with channel dimension."""
     # tensor: (batch, channels, time, features)
     # mask: (batch, time, features)
-    # Use broadcasting: mask.unsqueeze(1) creates (batch, 1, time, features)
-    # which automatically broadcasts to (batch, channels, time, features)
-    return tensor * mask.unsqueeze(1)
+    batch_size, channels, time, features = tensor.shape
+    expanded_mask = mask.unsqueeze(1).expand(batch_size, channels, time, features)
+    return tensor * expanded_mask
 
 
 def calculate_conv_output_size(input_size: torch.Tensor, kernel_size: int, stride: int, padding: tuple):
