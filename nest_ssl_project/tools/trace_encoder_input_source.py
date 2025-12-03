@@ -85,62 +85,105 @@ def main():
     if len(nemo_encoder_inputs) > 0 and len(nemo_preprocessor_outputs) > 0:
         # encoder input might be a list of tensors (if input was tuple) or a single tensor
         first_input = nemo_encoder_inputs[0]
-        if isinstance(first_input, (list, tuple)) and len(first_input) > 0:
-            nemo_encoder_input = first_input[0]
+        
+        print("\n" + "="*80)
+        print("NeMo: Encoder input analysis")
+        print("="*80)
+        print(f"first_input type: {type(first_input)}")
+        print(f"first_input: {first_input if not isinstance(first_input, torch.Tensor) else f'Tensor {first_input.shape}'}")
+        
+        if isinstance(first_input, (list, tuple)):
+            print(f"first_input length: {len(first_input)}")
+            if len(first_input) > 0:
+                nemo_encoder_input = first_input[0]
+                print(f"first_input[0] type: {type(nemo_encoder_input)}")
+            else:
+                print("WARNING: first_input is empty list/tuple")
+                nemo_encoder_input = None
         else:
             nemo_encoder_input = first_input
         
-        print("\n" + "="*80)
-        print("NeMo: Compare encoder input with preprocessor outputs")
-        print("="*80)
-        
-        for i, preproc_out in enumerate(nemo_preprocessor_outputs):
-            preproc_out_tensor = preproc_out[0] if isinstance(preproc_out, (list, tuple)) else preproc_out
-            print(f"\nCall {i}: {compare_tensors(nemo_encoder_input, preproc_out_tensor, f'encoder_input vs preprocessor_output[{i}]')}")
-            if isinstance(preproc_out_tensor, torch.Tensor):
-                print(f"  preprocessor_output[{i}] shape: {preproc_out_tensor.shape}, mean: {preproc_out_tensor.float().mean():.6f}")
-        
-        print(f"\nencoder_input shape: {nemo_encoder_input.shape}, mean: {nemo_encoder_input.float().mean():.6f}")
+        if nemo_encoder_input is not None and isinstance(nemo_encoder_input, torch.Tensor):
+            print("\n" + "="*80)
+            print("NeMo: Compare encoder input with preprocessor outputs")
+            print("="*80)
+            
+            for i, preproc_out in enumerate(nemo_preprocessor_outputs):
+                preproc_out_tensor = preproc_out[0] if isinstance(preproc_out, (list, tuple)) else preproc_out
+                print(f"\nCall {i}: {compare_tensors(nemo_encoder_input, preproc_out_tensor, f'encoder_input vs preprocessor_output[{i}]')}")
+                if isinstance(preproc_out_tensor, torch.Tensor):
+                    print(f"  preprocessor_output[{i}] shape: {preproc_out_tensor.shape}, mean: {preproc_out_tensor.float().mean():.6f}")
+            
+            print(f"\nencoder_input shape: {nemo_encoder_input.shape}, mean: {nemo_encoder_input.float().mean():.6f}")
+        else:
+            print("\nWARNING: encoder_input is not a valid tensor")
     
     if len(nest_encoder_inputs) > 0 and len(nest_preprocessor_outputs) > 0:
         # encoder input might be a list of tensors (if input was tuple) or a single tensor
         first_input = nest_encoder_inputs[0]
-        if isinstance(first_input, (list, tuple)) and len(first_input) > 0:
-            nest_encoder_input = first_input[0]
+        
+        print("\n" + "="*80)
+        print("nest: Encoder input analysis")
+        print("="*80)
+        print(f"first_input type: {type(first_input)}")
+        print(f"first_input: {first_input if not isinstance(first_input, torch.Tensor) else f'Tensor {first_input.shape}'}")
+        
+        if isinstance(first_input, (list, tuple)):
+            print(f"first_input length: {len(first_input)}")
+            if len(first_input) > 0:
+                nest_encoder_input = first_input[0]
+                print(f"first_input[0] type: {type(nest_encoder_input)}")
+            else:
+                print("WARNING: first_input is empty list/tuple")
+                nest_encoder_input = None
         else:
             nest_encoder_input = first_input
         
-        print("\n" + "="*80)
-        print("nest: Compare encoder input with preprocessor outputs")
-        print("="*80)
-        
-        for i, preproc_out in enumerate(nest_preprocessor_outputs):
-            preproc_out_tensor = preproc_out[0] if isinstance(preproc_out, (list, tuple)) else preproc_out
-            print(f"\nCall {i}: {compare_tensors(nest_encoder_input, preproc_out_tensor, f'encoder_input vs preprocessor_output[{i}]')}")
-            if isinstance(preproc_out_tensor, torch.Tensor):
-                print(f"  preprocessor_output[{i}] shape: {preproc_out_tensor.shape}, mean: {preproc_out_tensor.float().mean():.6f}")
-        
-        print(f"\nencoder_input shape: {nest_encoder_input.shape}, mean: {nest_encoder_input.float().mean():.6f}")
+        if nest_encoder_input is not None and isinstance(nest_encoder_input, torch.Tensor):
+            print("\n" + "="*80)
+            print("nest: Compare encoder input with preprocessor outputs")
+            print("="*80)
+            
+            for i, preproc_out in enumerate(nest_preprocessor_outputs):
+                preproc_out_tensor = preproc_out[0] if isinstance(preproc_out, (list, tuple)) else preproc_out
+                print(f"\nCall {i}: {compare_tensors(nest_encoder_input, preproc_out_tensor, f'encoder_input vs preprocessor_output[{i}]')}")
+                if isinstance(preproc_out_tensor, torch.Tensor):
+                    print(f"  preprocessor_output[{i}] shape: {preproc_out_tensor.shape}, mean: {preproc_out_tensor.float().mean():.6f}")
+            
+            print(f"\nencoder_input shape: {nest_encoder_input.shape}, mean: {nest_encoder_input.float().mean():.6f}")
+        else:
+            print("\nWARNING: encoder_input is not a valid tensor")
     
     # Compare NeMo vs nest encoder inputs
     if len(nemo_encoder_inputs) > 0 and len(nest_encoder_inputs) > 0:
         first_nemo = nemo_encoder_inputs[0]
         first_nest = nest_encoder_inputs[0]
         
+        nemo_valid = False
+        nest_valid = False
+        
         if isinstance(first_nemo, (list, tuple)) and len(first_nemo) > 0:
             nemo_encoder_input = first_nemo[0]
-        else:
+            nemo_valid = isinstance(nemo_encoder_input, torch.Tensor)
+        elif isinstance(first_nemo, torch.Tensor):
             nemo_encoder_input = first_nemo
+            nemo_valid = True
         
         if isinstance(first_nest, (list, tuple)) and len(first_nest) > 0:
             nest_encoder_input = first_nest[0]
-        else:
+            nest_valid = isinstance(nest_encoder_input, torch.Tensor)
+        elif isinstance(first_nest, torch.Tensor):
             nest_encoder_input = first_nest
+            nest_valid = True
         
         print("\n" + "="*80)
         print("NeMo vs nest encoder inputs")
         print("="*80)
-        print(f"\n{compare_tensors(nemo_encoder_input, nest_encoder_input, 'NeMo vs nest')}")
+        
+        if nemo_valid and nest_valid:
+            print(f"\n{compare_tensors(nemo_encoder_input, nest_encoder_input, 'NeMo vs nest')}")
+        else:
+            print(f"\nWARNING: Cannot compare. NeMo valid: {nemo_valid}, nest valid: {nest_valid}")
 
 
 if __name__ == '__main__':
