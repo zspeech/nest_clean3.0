@@ -55,7 +55,8 @@ def main():
         print(f"NeMo preprocessor inputs: {len(nemo_prep_inputs)} items")
         for i, inp in enumerate(nemo_prep_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}, mean={inp.mean().item():.6f}")
+                mean_val = inp.float().mean().item() if inp.numel() > 0 else 0
+                print(f"  input[{i}]: shape={inp.shape}, dtype={inp.dtype}, mean={mean_val:.6f}")
     else:
         print("NeMo preprocessor inputs: None")
     
@@ -63,7 +64,8 @@ def main():
         print(f"nest preprocessor inputs: {len(nest_prep_inputs)} items")
         for i, inp in enumerate(nest_prep_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}, mean={inp.mean().item():.6f}")
+                mean_val = inp.float().mean().item() if inp.numel() > 0 else 0
+                print(f"  input[{i}]: shape={inp.shape}, dtype={inp.dtype}, mean={mean_val:.6f}")
     else:
         print("nest preprocessor inputs: None")
     
@@ -109,13 +111,15 @@ def main():
         print(f"NeMo featurizer inputs: {len(nemo_feat_inputs)} items")
         for i, inp in enumerate(nemo_feat_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}, mean={inp.mean().item():.6f}")
+                mean_val = inp.float().mean().item() if inp.numel() > 0 else 0
+                print(f"  input[{i}]: shape={inp.shape}, dtype={inp.dtype}, mean={mean_val:.6f}")
     
     if nest_feat_inputs:
         print(f"nest featurizer inputs: {len(nest_feat_inputs)} items")
         for i, inp in enumerate(nest_feat_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}, mean={inp.mean().item():.6f}")
+                mean_val = inp.float().mean().item() if inp.numel() > 0 else 0
+                print(f"  input[{i}]: shape={inp.shape}, dtype={inp.dtype}, mean={mean_val:.6f}")
     
     # Compare featurizer inputs
     if nemo_feat_inputs and nest_feat_inputs:
