@@ -56,7 +56,15 @@ def main():
     if len(nest_inputs) > 0:
         inp = nest_inputs[0] # (x, lengths)
         print(f"nest input type: {type(inp)}")
-        if isinstance(inp, tuple):
+        if isinstance(inp, list):
+            print(f"nest input list len: {len(inp)}")
+            for i, item in enumerate(inp):
+                print(f"  Item {i} type: {type(item)}")
+                if isinstance(item, torch.Tensor):
+                    print(f"  Item {i} shape: {item.shape}")
+                    if item.dim() == 1:
+                        print(f"  Item {i} values: {item}")
+        elif isinstance(inp, tuple):
              print(f"nest input tuple len: {len(inp)}")
              if len(inp) >= 2:
                 x = inp[0]
