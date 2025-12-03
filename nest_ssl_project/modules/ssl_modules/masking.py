@@ -210,10 +210,12 @@ class ConvFeatureMaksingWrapper(NeuralModule):
             
             # FORCE DETERMINISTIC MASKING for alignment
             masks = torch.zeros_like(feats)
-            if feats.size(2) > 20:
-                masks[:, :, 10:20] = 1.0
+            # Mask frames 8 to 24 to ensure mean > 0.8 after subsampling (8 frames per subsampled frame)
+            # This covers 3 subsampled frames (8//8=1, 24//8=3), each with mean >= 7/8 = 0.875 > 0.8
+            if feats.size(2) > 24:
+                masks[:, :, 8:24] = 1.0
                 masked_feats = feats.clone()
-                masked_feats[:, :, 10:20] = 0.0
+                masked_feats[:, :, 8:24] = 0.0
             else:
                 masked_feats = feats
             self.curr_mask = masks

@@ -339,11 +339,12 @@ def main(cfg):
             def forward(self, input_feats, input_lengths):
                 # input_feats: [B, D, T]
                 masks = torch.zeros_like(input_feats)
-                # Mask frames 10 to 20
-                if input_feats.size(2) > 20:
-                    masks[:, :, 10:20] = 1.0
+                # Mask frames 8 to 24 to ensure mean > 0.8 after subsampling (8 frames per subsampled frame)
+                # This covers 3 subsampled frames (8//8=1, 24//8=3), each with mean >= 7/8 = 0.875 > 0.8
+                if input_feats.size(2) > 24:
+                    masks[:, :, 8:24] = 1.0
                     masked_feats = input_feats.clone()
-                    masked_feats[:, :, 10:20] = 0.0
+                    masked_feats[:, :, 8:24] = 0.0
                 else:
                     masked_feats = input_feats
                 return masked_feats, masks
