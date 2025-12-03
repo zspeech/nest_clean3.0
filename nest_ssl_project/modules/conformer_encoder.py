@@ -642,8 +642,8 @@ class ConvSubsampling(torch.nn.Module):
             self.out = None
             self.conv2d_subsampling = False
 
-        # Use nn.Sequential to match NeMo's old version (without MaskedConvSequential)
-        self.conv = nn.Sequential(*layers)
+        # Use MaskedConvSequential to match NeMo's version (with masking)
+        self.conv = MaskedConvSequential(*layers)
 
     def forward(self, x, lengths):
         out_lengths = calc_length(
@@ -655,11 +655,9 @@ class ConvSubsampling(torch.nn.Module):
             repeat_num=self._sampling_num,
         )
 
-        # Unsqueeze Channel Axis (for conv2d_subsampling)
-        if self.conv2d_subsampling:
-            x = x.unsqueeze(1)
-        # Transpose to Channel First mode
-        else:
+        # Transpose to Channel First mode (only for non-conv2d_subsampling)
+        # For conv2d_subsampling, MaskedConvSequential will handle unsqueeze internally
+        if not self.conv2d_subsampling:
             x = x.transpose(1, 2)
 
         # split inputs if chunking_factor is set
@@ -674,18 +672,20 @@ class ConvSubsampling(torch.nn.Module):
                 need_to_split = True
 
             if need_to_split:
-                x, success = self.conv_split_by_batch(x)
+                x, lengths, success = self.conv_split_by_batch(x, out_lengths)
                 if not success:  # if unable to split by batch, try by channel
                     if self._subsampling == 'dw_striding':
+                        # TODO: implement lengths inside conv_split_by_channel
                         x = self.conv_split_by_channel(x)
+                        lengths = out_lengths
                     else:
-                        x = self.conv(x)  # try anyway
+                        x, lengths = self.conv(x, out_lengths)  # try anyway
             else:
-                x = self.conv(x)
+                x, lengths = self.conv(x, out_lengths)
         else:
-            x = self.conv(x)
+            x, lengths = self.conv(x, out_lengths)
         
-        lengths = out_lengths
+        lengths = lengths.to(torch.int64)
 
         # Flatten Channel and Frequency Axes
         if self.conv2d_subsampling:
@@ -697,11 +697,11 @@ class ConvSubsampling(torch.nn.Module):
 
         return x, lengths
 
-    def conv_split_by_batch(self, x):
+    def conv_split_by_batch(self, x, lengths):
         """Tries to split input by batch, run conv and concat results"""
         b, *_ = x.size()
         if b == 1:  # can't split if batch size is 1
-            return x, False
+            return x, lengths, False
 
         if self.subsampling_conv_chunking_factor > 1:
             cf = self.subsampling_conv_chunking_factor
@@ -714,15 +714,23 @@ class ConvSubsampling(torch.nn.Module):
 
         new_batch_size = b // cf
         if new_batch_size == 0:  # input is too big
-            return x, False
+            return x, lengths, False
 
-        ans = [self.conv(chunk) for chunk in torch.split(x, new_batch_size, 0)]
-        return torch.cat(ans), True
+        ans = [
+            self.conv(chunk, ln)
+            for chunk, ln in zip(
+                torch.split(x, new_batch_size, 0),
+                torch.split(lengths, new_batch_size, 0),
+            )
+        ]
+        return torch.cat([a[0] for a in ans]), torch.cat([a[1] for a in ans]), True
 
     def conv_split_by_channel(self, x):
         """For dw convs, tries to split input by time, run conv and concat results"""
 
-        # Note: input x already has shape (batch, 1, time, features) from forward()
+        # Note: this method doesn't use the convolution masking implemented in MaskedConvSequential
+        # Convert input (batch, time, features) to conv format
+        x = x.unsqueeze(1)  # (batch, 1, time, features)
         x = self.conv[0](x)  # full conv2D
         x = self.conv[1](x)  # activation
 
