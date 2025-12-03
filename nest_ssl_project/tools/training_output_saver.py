@@ -264,6 +264,8 @@ class TrainingOutputSaver:
             layer_outputs[name] = {
                 'forward_inputs': hook_data.get('forward_inputs'),
                 'forward_outputs': hook_data.get('forward_outputs'),
+                'all_forward_inputs': hook_data.get('all_forward_inputs', []),
+                'all_forward_outputs': hook_data.get('all_forward_outputs', []),
             }
         
         with open(step_dir / 'layer_outputs.pkl', 'wb') as f:
