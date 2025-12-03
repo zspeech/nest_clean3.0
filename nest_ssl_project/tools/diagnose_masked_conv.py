@@ -9,6 +9,21 @@ import sys
 sys.path.insert(0, '.')
 
 
+# Copy NeMo's implementation directly for comparison
+def nemo_apply_channel_mask(tensor, mask):
+    """Apply mask to tensor with channel dimension. (NeMo version)"""
+    # tensor: (batch, channels, time, features)
+    # mask: (batch, time, features)
+    batch_size, channels, time, features = tensor.shape
+    expanded_mask = mask.unsqueeze(1).expand(batch_size, channels, time, features)
+    return tensor * expanded_mask
+
+
+def nemo_calculate_conv_output_size(input_size, kernel_size, stride, padding):
+    """Calculate exact output size after convolution. (NeMo version)"""
+    return (input_size + padding[0] + padding[1] - kernel_size) // stride + 1
+
+
 def main():
     torch.manual_seed(42)
     
@@ -24,17 +39,14 @@ def main():
     print(f"\nTest input shape: {test_input.shape}")
     print(f"Test lengths: {test_lengths}")
     
-    # Import both implementations
-    from nemo.collections.asr.parts.submodules.subsampling import (
-        MaskedConvSequential as NeMoMaskedConvSequential,
-        apply_channel_mask as nemo_apply_channel_mask,
-        calculate_conv_output_size as nemo_calc_conv_output_size,
-    )
+    # Import nest implementation
     from modules.conformer_encoder import (
-        MaskedConvSequential as NestMaskedConvSequential,
         apply_channel_mask as nest_apply_channel_mask,
         calculate_conv_output_size as nest_calc_conv_output_size,
     )
+    
+    # Use NeMo's functions defined above
+    nemo_calc_conv_output_size = nemo_calculate_conv_output_size
     
     # Create simple conv layers (same as dw_striding)
     def create_layers():
@@ -60,12 +72,10 @@ def main():
     torch.manual_seed(42)
     nest_layers = create_layers()
     
-    # Create MaskedConvSequential
-    nemo_conv = NeMoMaskedConvSequential(*nemo_layers)
-    nest_conv = NestMaskedConvSequential(*nest_layers)
-    
-    # Sync weights
-    nest_conv.load_state_dict(nemo_conv.state_dict())
+    # Sync weights between the two sets of layers
+    for nemo_layer, nest_layer in zip(nemo_layers, nest_layers):
+        if hasattr(nemo_layer, 'weight'):
+            nest_layer.load_state_dict(nemo_layer.state_dict())
     
     print("\n" + "="*40)
     print("Step-by-step comparison")
