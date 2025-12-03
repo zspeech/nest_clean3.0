@@ -429,8 +429,7 @@ class MaskedConvSequential(nn.Sequential):
         """
         batch_size, channels, time, features = tensor.shape
         # Create time mask: (batch, time)
-        time_mask = torch.arange(time, device=tensor.device, dtype=torch.long).expand(batch_size, time) < lengths.unsqueeze(1)
-        # Expand to (batch, time, features) using broadcasting
+        time_mask = torch.arange(time, device=tensor.device).expand(batch_size, time) < lengths.unsqueeze(1)
         return time_mask.unsqueeze(-1).expand(batch_size, time, features).to(tensor.dtype)
 
 
