@@ -31,6 +31,7 @@ class Serialization:
         """
         Instantiate an object from a configuration dictionary.
         Supports Hydra-style instantiation with _target_ key.
+        All NeMo targets are remapped to local implementations.
         """
         if config is None:
             return None
@@ -42,16 +43,12 @@ class Serialization:
             # Hydra-style instantiation
             target = config['_target_']
 
-            # Remap NeMo targets to local implementations so we don't import nemo.*
-            # Set USE_NEMO_CONFORMER=True to use NeMo's ConformerEncoder directly
-            # This can be set via environment variable: USE_NEMO_CONFORMER=true
-            import os
-            USE_NEMO_CONFORMER = os.getenv('USE_NEMO_CONFORMER', 'false').lower() == 'true'
-            
+            # Remap NeMo targets to local implementations (never import from nemo.*)
             target_map = {
                 # Preprocessor and encoder
                 'nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor': 'modules.audio_preprocessing.AudioToMelSpectrogramPreprocessor',
                 'nemo.collections.asr.modules.SpectrogramAugmentation': 'modules.audio_preprocessing.SpectrogramAugmentation',
+                'nemo.collections.asr.modules.ConformerEncoder': 'modules.conformer_encoder.ConformerEncoder',
                 # SSL-specific modules
                 'nemo.collections.asr.modules.ssl_modules.MultiSpeakerNoiseAugmentation': 'modules.ssl_modules.augmentation.MultiSpeakerNoiseAugmentation',
                 'nemo.collections.asr.modules.MultiSoftmaxDecoder': 'modules.ssl_modules.multi_softmax_decoder.MultiSoftmaxDecoder',
@@ -60,21 +57,16 @@ class Serialization:
                 # Loss
                 'nemo.collections.asr.losses.MultiMLMLoss': 'losses.ssl_losses.mlm.MultiMLMLoss',
             }
-            
-            # Optionally use NeMo's ConformerEncoder directly
-            if not USE_NEMO_CONFORMER:
-                target_map['nemo.collections.asr.modules.ConformerEncoder'] = 'modules.conformer_encoder.ConformerEncoder'
 
             # Apply remapping if needed
             original_target = target
             target = target_map.get(target, target)
             
-            # Check if remapping failed (still contains nemo) - but allow NeMo imports if explicitly requested
-            if 'nemo' in target and not USE_NEMO_CONFORMER:
+            # Check if remapping failed (still contains nemo) - never allow NeMo imports
+            if 'nemo' in target:
                 raise ValueError(
                     f"Target '{original_target}' was not remapped and still contains 'nemo'. "
-                    f"Please add it to the target_map in serialization.py or create the local implementation. "
-                    f"Alternatively, set USE_NEMO_CONFORMER=true to use NeMo's ConformerEncoder directly."
+                    f"Please add it to the target_map in serialization.py or create the local implementation."
                 )
 
             parts = target.split('.')
