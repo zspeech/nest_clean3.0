@@ -328,6 +328,16 @@ def main(cfg):
     # Create model
     asr_model = EncDecDenoiseMaskedTokenPredModel(cfg=cfg.model, trainer=trainer)
     
+    # FORCE PREPROCESSOR TO EVAL MODE for deterministic featurizer output
+    # This disables dither and nb_augmentation even in training
+    if hasattr(asr_model, 'preprocessor'):
+        logging.info("FORCING PREPROCESSOR TO EVAL MODE for deterministic output")
+        asr_model.preprocessor.eval()
+        # Also force featurizer to eval mode
+        if hasattr(asr_model.preprocessor, 'featurizer'):
+            asr_model.preprocessor.featurizer.eval()
+            logging.info("  Featurizer also set to eval mode")
+    
     # Initialize from pretrained if specified
     asr_model.maybe_init_from_pretrained_checkpoint(cfg)
     
