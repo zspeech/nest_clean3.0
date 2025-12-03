@@ -59,6 +59,46 @@ def main():
     max_diff_step1 = diff_step1.max().item()
     print(f"  Comparison: max_diff={max_diff_step1:.6e} {'[OK]' if max_diff_step1 < 1e-5 else '[FAIL]'}")
     
+    # Check MaskedConvSequential input (encoder.pre_encode.conv hook)
+    nemo_conv = nemo_layers.get('encoder.pre_encode.conv', {})
+    nest_conv = nest_layers.get('encoder.pre_encode.conv', {})
+    
+    nemo_conv_inputs = nemo_conv.get('all_forward_inputs', [])
+    nest_conv_inputs = nest_conv.get('all_forward_inputs', [])
+    
+    if len(nemo_conv_inputs) > 0:
+        nemo_conv_input = nemo_conv_inputs[0]
+        if isinstance(nemo_conv_input, (list, tuple)) and len(nemo_conv_input) > 0:
+            nemo_conv_input_tensor = nemo_conv_input[0]
+        else:
+            nemo_conv_input_tensor = nemo_conv_input
+        
+        if isinstance(nemo_conv_input_tensor, torch.Tensor):
+            print(f"\nMaskedConvSequential input (from encoder.pre_encode.conv hook):")
+            print(f"  NeMo: shape={nemo_conv_input_tensor.shape}, mean={nemo_conv_input_tensor.float().mean():.6f}")
+            
+            # Compare with Step 1
+            if nemo_conv_input_tensor.shape == nemo_x.shape:
+                diff_conv_step1 = (nemo_conv_input_tensor.float() - nemo_x.float()).abs()
+                max_diff_conv_step1 = diff_conv_step1.max().item()
+                print(f"    vs Step 1: max_diff={max_diff_conv_step1:.6e} {'[OK]' if max_diff_conv_step1 < 1e-5 else '[FAIL]'}")
+    
+    if len(nest_conv_inputs) > 0:
+        nest_conv_input = nest_conv_inputs[0]
+        if isinstance(nest_conv_input, (list, tuple)) and len(nest_conv_input) > 0:
+            nest_conv_input_tensor = nest_conv_input[0]
+        else:
+            nest_conv_input_tensor = nest_conv_input
+        
+        if isinstance(nest_conv_input_tensor, torch.Tensor):
+            print(f"  nest: shape={nest_conv_input_tensor.shape}, mean={nest_conv_input_tensor.float().mean():.6f}")
+            
+            # Compare with Step 1
+            if nest_conv_input_tensor.shape == nest_x.shape:
+                diff_conv_step1 = (nest_conv_input_tensor.float() - nest_x.float()).abs()
+                max_diff_conv_step1 = diff_conv_step1.max().item()
+                print(f"    vs Step 1: max_diff={max_diff_conv_step1:.6e} {'[OK]' if max_diff_conv_step1 < 1e-5 else '[FAIL]'}")
+    
     # Step 2: unsqueeze(1) in MaskedConvSequential.forward
     nemo_x_unsqueezed = nemo_x.unsqueeze(1)  # [B, 1, T, D]
     nest_x_unsqueezed = nest_x.unsqueeze(1)  # [B, 1, T, D]
