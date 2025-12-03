@@ -93,12 +93,14 @@ class ForwardBackwardHook:
             self.backward_hook_handle = None
     
     def get_data(self):
-        """Get captured data (last forward/backward pass)."""
+        """Get captured data (all forward/backward passes)."""
         return {
             'forward_inputs': self.forward_inputs[-1] if self.forward_inputs else None,
             'forward_outputs': self.forward_outputs[-1] if self.forward_outputs else None,
             'backward_input_grads': self.backward_input_grads[-1] if self.backward_input_grads else None,
             'backward_output_grads': self.backward_output_grads[-1] if self.backward_output_grads else None,
+            'all_forward_inputs': self.forward_inputs if self.forward_inputs else [],
+            'all_forward_outputs': self.forward_outputs if self.forward_outputs else [],
         }
     
     def clear(self):
