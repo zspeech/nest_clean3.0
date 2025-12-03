@@ -48,17 +48,6 @@ def normalize_batch(x, seq_len, normalize_type):
         batch_size = x.shape[0]
         max_time = x.shape[2]
         
-        # DEBUG: Save inputs for comparison (only on first call to avoid spam)
-        if not hasattr(normalize_batch, '_debug_saved'):
-            normalize_batch._debug_saved = True
-            normalize_batch._debug_inputs = {
-                'x': x.detach().cpu().clone(),
-                'seq_len': seq_len.detach().cpu().clone(),
-                'x_shape': x.shape,
-                'x_dtype': str(x.dtype),
-                'seq_len_values': seq_len.detach().cpu().clone().tolist(),
-            }
-
         # When doing stream capture to a graph, item() is not allowed
         # becuase it calls cudaStreamSynchronize(). Therefore, we are
         # sacrificing some error checking when running with cuda graphs.
@@ -303,11 +292,6 @@ class FilterbankFeatures(nn.Module):
             else:
                 raise ValueError("log_zero_guard_type must be 'add' or 'clamp'")
         
-        # DEBUG: Check log output
-        if not hasattr(self, '_log_debug_printed'):
-            print(f"DEBUG FORWARD: log mean={x.mean().item()}, std={x.std().item()}")
-            self._log_debug_printed = True
-        
         # Frame splicing (simplified - not fully implemented)
         # if self.frame_splicing > 1:
         #     x = splice_frames(x, self.frame_splicing)
@@ -315,11 +299,6 @@ class FilterbankFeatures(nn.Module):
         # Normalize
         if self.normalize:
             x, _, _ = normalize_batch(x, seq_len, normalize_type=self.normalize)
-            
-            # DEBUG: Check norm output
-            if not hasattr(self, '_norm_debug_printed'):
-                print(f"DEBUG FORWARD: norm mean={x.mean().item()}, std={x.std().item()}")
-                self._norm_debug_printed = True
         
         # Mask and pad
         max_len = x.size(-1)
