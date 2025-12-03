@@ -154,9 +154,9 @@ def main():
     print(f"\n8. After power: shape={x_pow.shape}")
     
     # Mel filterbank
-    fb_squeezed = fb.squeeze(0) if fb is not None else None
-    if fb_squeezed is not None:
-        x_mel = torch.matmul(fb_squeezed, x_pow)
+    # IMPORTANT: Keep fb as [1, 80, 257] for correct broadcasting with [B, 257, T]
+    if fb is not None:
+        x_mel = torch.matmul(fb.to(x_pow.dtype), x_pow)
     else:
         x_mel = x_pow
     print(f"\n9. After mel filterbank: shape={x_mel.shape}")
