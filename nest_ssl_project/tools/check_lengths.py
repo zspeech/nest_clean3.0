@@ -35,25 +35,37 @@ def main():
     
     if len(nemo_inputs) > 0:
         inp = nemo_inputs[0] # (x, lengths)
-        if isinstance(inp, (list, tuple)) and len(inp) >= 2:
-            lengths = inp[1]
-            if isinstance(lengths, torch.Tensor):
-                print(f"NeMo lengths: {lengths}")
-            else:
-                 print(f"NeMo lengths type: {type(lengths)}")
-        else:
-            print(f"NeMo input structure: {type(inp)}")
+        print(f"NeMo input type: {type(inp)}")
+        if isinstance(inp, list):
+            print(f"NeMo input list len: {len(inp)}")
+            for i, item in enumerate(inp):
+                print(f"  Item {i} type: {type(item)}")
+                if isinstance(item, torch.Tensor):
+                    print(f"  Item {i} shape: {item.shape}")
+                    if item.dim() == 1: # Likely lengths
+                         print(f"  Item {i} values: {item}")
+        elif isinstance(inp, tuple):
+             print(f"NeMo input tuple len: {len(inp)}")
+             if len(inp) >= 2:
+                lengths = inp[1]
+                if isinstance(lengths, torch.Tensor):
+                    print(f"NeMo lengths: {lengths}")
+                else:
+                     print(f"NeMo lengths type: {type(lengths)}")
 
     if len(nest_inputs) > 0:
         inp = nest_inputs[0] # (x, lengths)
-        if isinstance(inp, (list, tuple)) and len(inp) >= 2:
-            lengths = inp[1]
-            if isinstance(lengths, torch.Tensor):
-                print(f"nest lengths: {lengths}")
-            else:
-                 print(f"nest lengths type: {type(lengths)}")
-        else:
-            print(f"nest input structure: {type(inp)}")
+        print(f"nest input type: {type(inp)}")
+        if isinstance(inp, tuple):
+             print(f"nest input tuple len: {len(inp)}")
+             if len(inp) >= 2:
+                x = inp[0]
+                lengths = inp[1]
+                print(f"nest x shape: {x.shape}")
+                if isinstance(lengths, torch.Tensor):
+                    print(f"nest lengths: {lengths}")
+                else:
+                     print(f"nest lengths type: {type(lengths)}")
 
 if __name__ == '__main__':
     main()
