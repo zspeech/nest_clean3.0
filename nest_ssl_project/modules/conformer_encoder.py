@@ -636,8 +636,8 @@ class ConvSubsampling(torch.nn.Module):
             self.out = None
             self.conv2d_subsampling = False
 
-        # Use MaskedConvSequential to match NeMo's version (with masking)
-        self.conv = MaskedConvSequential(*layers)
+        # Use nn.Sequential to match NeMo's old version (without masking)
+        self.conv = nn.Sequential(*layers)
 
     def forward(self, x, lengths):
         out_lengths = calc_length(
@@ -650,9 +650,12 @@ class ConvSubsampling(torch.nn.Module):
         )
 
         # Transpose to Channel First mode (only for non-conv2d_subsampling)
-        # For conv2d_subsampling, MaskedConvSequential will handle unsqueeze internally
         if not self.conv2d_subsampling:
             x = x.transpose(1, 2)
+
+        # For conv2d_subsampling, manually unsqueeze to [B, 1, T, D] for nn.Sequential
+        if self.conv2d_subsampling:
+            x = x.unsqueeze(1)  # [B, T, D] -> [B, 1, T, D]
 
         # split inputs if chunking_factor is set
         if self.subsampling_conv_chunking_factor != -1 and self.conv2d_subsampling:
@@ -673,13 +676,13 @@ class ConvSubsampling(torch.nn.Module):
                         x = self.conv_split_by_channel(x)
                         lengths = out_lengths
                     else:
-                        x, lengths = self.conv(x, out_lengths)  # try anyway
+                        x = self.conv(x)  # nn.Sequential only takes x
             else:
-                x, lengths = self.conv(x, out_lengths)
+                x = self.conv(x)  # nn.Sequential only takes x
         else:
-            x, lengths = self.conv(x, out_lengths)
+            x = self.conv(x)  # nn.Sequential only takes x
         
-        lengths = lengths.to(torch.int64)
+        lengths = out_lengths.to(torch.int64)
 
         # Flatten Channel and Frequency Axes
         if self.conv2d_subsampling:
@@ -711,13 +714,10 @@ class ConvSubsampling(torch.nn.Module):
             return x, lengths, False
 
         ans = [
-            self.conv(chunk, ln)
-            for chunk, ln in zip(
-                torch.split(x, new_batch_size, 0),
-                torch.split(lengths, new_batch_size, 0),
-            )
+            self.conv(chunk)  # nn.Sequential only takes x
+            for chunk in torch.split(x, new_batch_size, 0)
         ]
-        return torch.cat([a[0] for a in ans]), torch.cat([a[1] for a in ans]), True
+        return torch.cat(ans, dim=0), lengths, True
 
     def conv_split_by_channel(self, x):
         """For dw convs, tries to split input by time, run conv and concat results"""
