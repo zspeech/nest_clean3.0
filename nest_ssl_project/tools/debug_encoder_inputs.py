@@ -42,30 +42,44 @@ def main():
     print("="*60)
     nemo_enc = nemo_layers.get('encoder', {})
     print(f"Keys: {nemo_enc.keys()}")
-    print(f"forward_inputs: {type(nemo_enc.get('forward_inputs'))}")
-    print(f"forward_outputs: {type(nemo_enc.get('forward_outputs'))}")
+    nemo_enc_inputs = nemo_enc.get('forward_inputs')
+    print(f"forward_inputs: type={type(nemo_enc_inputs)}, len={len(nemo_enc_inputs) if nemo_enc_inputs else 0}")
+    nemo_enc_outputs = nemo_enc.get('forward_outputs')
+    print(f"forward_outputs: type={type(nemo_enc_outputs)}, len={len(nemo_enc_outputs) if isinstance(nemo_enc_outputs, (list, tuple)) else 'N/A'}")
     
-    if nemo_enc.get('forward_inputs'):
-        for i, inp in enumerate(nemo_enc['forward_inputs']):
+    if nemo_enc_inputs and len(nemo_enc_inputs) > 0:
+        print("  Inputs:")
+        for i, inp in enumerate(nemo_enc_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}")
+                print(f"    input[{i}]: shape={inp.shape}, mean={inp.float().mean().item():.6f}")
+            elif inp is None:
+                print(f"    input[{i}]: None")
             else:
-                print(f"  input[{i}]: type={type(inp)}, value={inp}")
+                print(f"    input[{i}]: type={type(inp)}")
+    else:
+        print("  Inputs: EMPTY or None")
     
     print("\n" + "="*60)
     print("nest encoder data")
     print("="*60)
     nest_enc = nest_layers.get('encoder', {})
     print(f"Keys: {nest_enc.keys()}")
-    print(f"forward_inputs: {type(nest_enc.get('forward_inputs'))}")
-    print(f"forward_outputs: {type(nest_enc.get('forward_outputs'))}")
+    nest_enc_inputs = nest_enc.get('forward_inputs')
+    print(f"forward_inputs: type={type(nest_enc_inputs)}, len={len(nest_enc_inputs) if nest_enc_inputs else 0}")
+    nest_enc_outputs = nest_enc.get('forward_outputs')
+    print(f"forward_outputs: type={type(nest_enc_outputs)}, len={len(nest_enc_outputs) if isinstance(nest_enc_outputs, (list, tuple)) else 'N/A'}")
     
-    if nest_enc.get('forward_inputs'):
-        for i, inp in enumerate(nest_enc['forward_inputs']):
+    if nest_enc_inputs and len(nest_enc_inputs) > 0:
+        print("  Inputs:")
+        for i, inp in enumerate(nest_enc_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}")
+                print(f"    input[{i}]: shape={inp.shape}, mean={inp.float().mean().item():.6f}")
+            elif inp is None:
+                print(f"    input[{i}]: None")
             else:
-                print(f"  input[{i}]: type={type(inp)}, value={inp}")
+                print(f"    input[{i}]: type={type(inp)}")
+    else:
+        print("  Inputs: EMPTY or None")
     
     # Check pre_encode data
     print("\n" + "="*60)
@@ -73,28 +87,40 @@ def main():
     print("="*60)
     nemo_pre = nemo_layers.get('encoder.pre_encode', {})
     print(f"Keys: {nemo_pre.keys()}")
-    print(f"forward_inputs: {type(nemo_pre.get('forward_inputs'))}")
+    nemo_pre_inputs = nemo_pre.get('forward_inputs')
+    print(f"forward_inputs: type={type(nemo_pre_inputs)}, len={len(nemo_pre_inputs) if nemo_pre_inputs else 0}")
     
-    if nemo_pre.get('forward_inputs'):
-        for i, inp in enumerate(nemo_pre['forward_inputs']):
+    if nemo_pre_inputs and len(nemo_pre_inputs) > 0:
+        print("  Inputs:")
+        for i, inp in enumerate(nemo_pre_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}, mean={inp.float().mean().item():.6f}")
+                print(f"    input[{i}]: shape={inp.shape}, mean={inp.float().mean().item():.6f}")
+            elif inp is None:
+                print(f"    input[{i}]: None")
             else:
-                print(f"  input[{i}]: type={type(inp)}, value={inp}")
+                print(f"    input[{i}]: type={type(inp)}")
+    else:
+        print("  Inputs: EMPTY or None")
     
     print("\n" + "="*60)
     print("nest pre_encode data")
     print("="*60)
     nest_pre = nest_layers.get('encoder.pre_encode', {})
     print(f"Keys: {nest_pre.keys()}")
-    print(f"forward_inputs: {type(nest_pre.get('forward_inputs'))}")
+    nest_pre_inputs = nest_pre.get('forward_inputs')
+    print(f"forward_inputs: type={type(nest_pre_inputs)}, len={len(nest_pre_inputs) if nest_pre_inputs else 0}")
     
-    if nest_pre.get('forward_inputs'):
-        for i, inp in enumerate(nest_pre['forward_inputs']):
+    if nest_pre_inputs and len(nest_pre_inputs) > 0:
+        print("  Inputs:")
+        for i, inp in enumerate(nest_pre_inputs):
             if isinstance(inp, torch.Tensor):
-                print(f"  input[{i}]: shape={inp.shape}, mean={inp.float().mean().item():.6f}")
+                print(f"    input[{i}]: shape={inp.shape}, mean={inp.float().mean().item():.6f}")
+            elif inp is None:
+                print(f"    input[{i}]: None")
             else:
-                print(f"  input[{i}]: type={type(inp)}, value={inp}")
+                print(f"    input[{i}]: type={type(inp)}")
+    else:
+        print("  Inputs: EMPTY or None")
     
     # Compare pre_encode inputs if both exist
     if nemo_pre.get('forward_inputs') and nest_pre.get('forward_inputs'):
