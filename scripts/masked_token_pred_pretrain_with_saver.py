@@ -329,37 +329,57 @@ def main(cfg):
     asr_model = EncDecDenoiseMaskedTokenPredModel(cfg=cfg.model, trainer=trainer)
     
     # Patch mask_processor to be deterministic for alignment
-    if hasattr(asr_model, 'mask_processor'):
-        logging.info("REPLACING mask_processor with DeterministicMasking...")
+    # STRATEGY: Monkey patch the ConvFeatureMaksingWrapper class directly to ensure it's applied
+    try:
+        from nemo.collections.asr.parts.submodules.subsampling import ConvFeatureMaksingWrapper
+        logging.info("Monkey patching ConvFeatureMaksingWrapper.forward for deterministic masking...")
         
-        class DeterministicMasking(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-                
-            def forward(self, input_feats, input_lengths):
-                # input_feats: [B, D, T]
-                masks = torch.zeros_like(input_feats)
+        def fixed_wrapper_forward(self, x, lengths):
+            feats, lengths = self.pre_encode(x=x, lengths=lengths)
+            self.curr_feat = feats.detach()
+            if self.apply_mask:
+                feats = feats.transpose(1, 2)
+                # DIRECTLY USE DETERMINISTIC MASKING HERE
+                masks = torch.zeros_like(feats)
                 # Mask frames 10 to 20
-                if input_feats.size(2) > 20:
+                if feats.size(2) > 20:
                     masks[:, :, 10:20] = 1.0
-                    masked_feats = input_feats.clone()
+                    masked_feats = feats.clone()
                     masked_feats[:, :, 10:20] = 0.0
                 else:
-                    masked_feats = input_feats
-                return masked_feats, masks
+                    masked_feats = feats
+                self.curr_mask = masks
+                masked_feats = masked_feats.transpose(1, 2).detach()
+            else:
+                masked_feats = feats
+                self.curr_mask = torch.zeros_like(feats)
+            return masked_feats, lengths
+
+        ConvFeatureMaksingWrapper.forward = fixed_wrapper_forward
+    except ImportError:
+        logging.warning("Could not import ConvFeatureMaksingWrapper for patching. Using fallback object replacement.")
         
-        # Replace the module
-        new_masking = DeterministicMasking()
-        # Move to correct device
-        # Note: asr_model.device might not be set yet if trainer hasn't started, but module usually on cpu init
-        
-        asr_model.mask_processor = new_masking
-        
-        # Also need to update references in wrapper if it exists
-        if hasattr(asr_model, 'pre_encoder') and hasattr(asr_model.pre_encoder, 'masking'):
-            asr_model.pre_encoder.masking = new_masking
-            logging.info("Updated mask_processor in pre_encoder wrapper")
+        # Fallback: Object replacement (previous method)
+        if hasattr(asr_model, 'mask_processor'):
+            logging.info("REPLACING mask_processor with DeterministicMasking...")
+            class DeterministicMasking(torch.nn.Module):
+                def __init__(self):
+                    super().__init__()
+                def forward(self, input_feats, input_lengths):
+                    masks = torch.zeros_like(input_feats)
+                    if input_feats.size(2) > 20:
+                        masks[:, :, 10:20] = 1.0
+                        masked_feats = input_feats.clone()
+                        masked_feats[:, :, 10:20] = 0.0
+                    else:
+                        masked_feats = input_feats
+                    return masked_feats, masks
             
+            new_masking = DeterministicMasking()
+            asr_model.mask_processor = new_masking
+            if hasattr(asr_model, 'pre_encoder') and hasattr(asr_model.pre_encoder, 'masking'):
+                asr_model.pre_encoder.masking = new_masking
+
     # FORCE PREPROCESSOR TO EVAL MODE for deterministic featurizer output
     # This disables dither and nb_augmentation even in training
     if hasattr(asr_model, 'preprocessor'):
