@@ -7,14 +7,31 @@ import torch
 import pickle
 from pathlib import Path
 import argparse
+import sys
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+
+# Add paths for pickle deserialization
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / 'NeMo'))
+sys.path.insert(0, str(project_root / 'nest_ssl_project'))
 
 
 def load_layer_outputs(output_dir):
     """Load layer outputs from saved files."""
     step_dir = Path(output_dir) / "step_0"
     
-    with open(step_dir / 'layer_outputs.pkl', 'rb') as f:
-        layer_outputs = pickle.load(f)
+    try:
+        with open(step_dir / 'layer_outputs.pkl', 'rb') as f:
+            layer_outputs = pickle.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load layer_outputs.pkl: {e}")
+        print("Trying with weights_only=False...")
+        with open(step_dir / 'layer_outputs.pkl', 'rb') as f:
+            import pickle
+            layer_outputs = pickle.load(f)
     
     return layer_outputs
 
