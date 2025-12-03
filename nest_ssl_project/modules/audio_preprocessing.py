@@ -213,22 +213,28 @@ class FilterbankFeatures(nn.Module):
     def get_seq_len(self, seq_len):
         """Compute output sequence length.
         
-        IMPORTANT: Must use torch.floor_divide to match NeMo exactly.
-        The difference between floor_divide and (float division + floor) can be 1
-        in certain cases, which causes all downstream computations to mismatch.
+        IMPORTANT: When center=True in STFT, the output length is:
+            1 + (input_len + 2*pad - n_fft) // hop_length
         
-        Note: This implementation matches NeMo's FilterbankFeatures.get_seq_len exactly.
+        When center=True and pad = n_fft // 2, this simplifies to:
+            1 + input_len // hop_length
+        
+        NeMo's get_seq_len formula doesn't include the +1, but the actual STFT output
+        does have that extra frame. We add +1 to match the actual STFT output length.
         """
-        # Assuming that center is True if stft_pad_amount = 0
+        # When exact_pad=False (default), stft_pad_amount is None, and center=True
+        # When exact_pad=True, stft_pad_amount = (n_fft - hop_length) // 2, and center=False
         pad_amount = self.stft_pad_amount * 2 if self.stft_pad_amount is not None else self.n_fft // 2 * 2
         
-        # Ensure seq_len is long/int type for floor_divide (matching NeMo behavior)
-        if seq_len.dtype != torch.long and seq_len.dtype != torch.int:
-            seq_len = seq_len.to(dtype=torch.long)
+        # Base calculation (same as NeMo's get_seq_len)
+        seq_len = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length)
         
-        # Use floor_divide exactly as NeMo does
-        result = torch.floor_divide((seq_len + pad_amount - self.n_fft), self.hop_length) + 1
-        return result.to(dtype=torch.long)
+        # Add 1 to match actual STFT output length when center=True
+        # This is because STFT with center=True produces one extra frame
+        if self.stft_pad_amount is None:  # center=True
+            seq_len = seq_len + 1
+        
+        return seq_len.to(dtype=torch.long)
     
     def forward(self, x, seq_len, linear_spec=False):
         """
