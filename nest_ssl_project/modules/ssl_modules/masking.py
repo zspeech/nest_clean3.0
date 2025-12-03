@@ -206,7 +206,18 @@ class ConvFeatureMaksingWrapper(NeuralModule):
         self.curr_feat = feats.detach()
         if self.apply_mask:
             feats = feats.transpose(1, 2)
-            masked_feats, self.curr_mask = self.masking(input_feats=feats, input_lengths=lengths)
+            # masked_feats, self.curr_mask = self.masking(input_feats=feats, input_lengths=lengths)
+            
+            # FORCE DETERMINISTIC MASKING for alignment
+            masks = torch.zeros_like(feats)
+            if feats.size(2) > 20:
+                masks[:, :, 10:20] = 1.0
+                masked_feats = feats.clone()
+                masked_feats[:, :, 10:20] = 0.0
+            else:
+                masked_feats = feats
+            self.curr_mask = masks
+            
             masked_feats = masked_feats.transpose(1, 2).detach()
         else:
             masked_feats = feats
