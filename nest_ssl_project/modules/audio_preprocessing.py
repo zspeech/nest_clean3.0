@@ -186,27 +186,21 @@ class FilterbankFeatures(nn.Module):
             warnings.warn("librosa not available, mel filterbank will be incorrect")
     
     def stft(self, x):
-        """Compute STFT."""
-        # DEBUG: Print STFT params once
-        if not hasattr(self, '_stft_debug_printed'):
-            print(f"DEBUG STFT: n_fft={self.n_fft}, hop={self.hop_length}, win={self.win_length}")
-            print(f"DEBUG STFT: exact_pad={self.exact_pad}, center={False if self.exact_pad else True}")
-            if self.window is not None:
-                print(f"DEBUG STFT: window shape={self.window.shape}, device={self.window.device}")
-                print(f"DEBUG STFT: window first 5={self.window[:5].tolist()}")
-            else:
-                print("DEBUG STFT: window is None")
-            self._stft_debug_printed = True
-            
+        """Compute STFT.
+        
+        NOTE: To match NeMo exactly, we must match their parameter calls exactly.
+        NeMo's implementation (as seen in inspection) does NOT pass pad_mode,
+        so it uses PyTorch's default (likely 'reflect').
+        """
         return torch.stft(
             x,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
             center=False if self.exact_pad else True,
-            window=self.window.to(dtype=torch.float, device=x.device),
+            window=self.window.to(dtype=torch.float),
             return_complex=True,
-            pad_mode="constant",
+            # pad_mode="constant",  # NeMo does not specify this!
         )
     
     def log_zero_guard_value_fn(self, x):
