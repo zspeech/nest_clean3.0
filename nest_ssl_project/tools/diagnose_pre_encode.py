@@ -23,9 +23,9 @@ def compare_tensors(name, t1, t2, prefix=""):
         print(f"{prefix}{name}: Shape mismatch: {t1.shape} vs {t2.shape}")
         return
     
-    diff = (t1 - t2).abs()
+    diff = (t1.float() - t2.float()).abs()
     max_diff = diff.max().item()
-    mean_diff = diff.mean().item()
+    mean_diff = diff.float().mean().item()
     
     status = "[OK]" if max_diff < 1e-5 else "[FAIL]"
     print(f"{prefix}{status} {name}: max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, shape={t1.shape}")
