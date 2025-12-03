@@ -23,15 +23,8 @@ def load_layer_outputs(output_dir):
     """Load layer outputs from saved files."""
     step_dir = Path(output_dir) / "step_0"
     
-    try:
-        with open(step_dir / 'layer_outputs.pkl', 'rb') as f:
-            layer_outputs = pickle.load(f)
-    except Exception as e:
-        print(f"Warning: Failed to load layer_outputs.pkl: {e}")
-        print("Trying with weights_only=False...")
-        with open(step_dir / 'layer_outputs.pkl', 'rb') as f:
-            import pickle
-            layer_outputs = pickle.load(f)
+    with open(step_dir / 'layer_outputs.pkl', 'rb') as f:
+        layer_outputs = pickle.load(f)
     
     return layer_outputs
 
@@ -90,7 +83,12 @@ def main():
     
     # Compare encoder input with each preprocessor output
     if len(nemo_encoder_inputs) > 0 and len(nemo_preprocessor_outputs) > 0:
-        nemo_encoder_input = nemo_encoder_inputs[0][0] if isinstance(nemo_encoder_inputs[0], (list, tuple)) else nemo_encoder_inputs[0]
+        # encoder input might be a list of tensors (if input was tuple) or a single tensor
+        first_input = nemo_encoder_inputs[0]
+        if isinstance(first_input, (list, tuple)) and len(first_input) > 0:
+            nemo_encoder_input = first_input[0]
+        else:
+            nemo_encoder_input = first_input
         
         print("\n" + "="*80)
         print("NeMo: Compare encoder input with preprocessor outputs")
@@ -105,7 +103,12 @@ def main():
         print(f"\nencoder_input shape: {nemo_encoder_input.shape}, mean: {nemo_encoder_input.float().mean():.6f}")
     
     if len(nest_encoder_inputs) > 0 and len(nest_preprocessor_outputs) > 0:
-        nest_encoder_input = nest_encoder_inputs[0][0] if isinstance(nest_encoder_inputs[0], (list, tuple)) else nest_encoder_inputs[0]
+        # encoder input might be a list of tensors (if input was tuple) or a single tensor
+        first_input = nest_encoder_inputs[0]
+        if isinstance(first_input, (list, tuple)) and len(first_input) > 0:
+            nest_encoder_input = first_input[0]
+        else:
+            nest_encoder_input = first_input
         
         print("\n" + "="*80)
         print("nest: Compare encoder input with preprocessor outputs")
@@ -121,8 +124,18 @@ def main():
     
     # Compare NeMo vs nest encoder inputs
     if len(nemo_encoder_inputs) > 0 and len(nest_encoder_inputs) > 0:
-        nemo_encoder_input = nemo_encoder_inputs[0][0] if isinstance(nemo_encoder_inputs[0], (list, tuple)) else nemo_encoder_inputs[0]
-        nest_encoder_input = nest_encoder_inputs[0][0] if isinstance(nest_encoder_inputs[0], (list, tuple)) else nest_encoder_inputs[0]
+        first_nemo = nemo_encoder_inputs[0]
+        first_nest = nest_encoder_inputs[0]
+        
+        if isinstance(first_nemo, (list, tuple)) and len(first_nemo) > 0:
+            nemo_encoder_input = first_nemo[0]
+        else:
+            nemo_encoder_input = first_nemo
+        
+        if isinstance(first_nest, (list, tuple)) and len(first_nest) > 0:
+            nest_encoder_input = first_nest[0]
+        else:
+            nest_encoder_input = first_nest
         
         print("\n" + "="*80)
         print("NeMo vs nest encoder inputs")
