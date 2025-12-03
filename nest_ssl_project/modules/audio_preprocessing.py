@@ -268,9 +268,10 @@ class FilterbankFeatures(nn.Module):
         
         # Preemphasis
         if self.preemph is not None:
-            timemask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_len_time.unsqueeze(1)
+            # Match NeMo: do NOT mask preemphasis
+            # timemask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_len_time.unsqueeze(1)
             x = torch.cat((x[:, 0].unsqueeze(1), x[:, 1:] - self.preemph * x[:, :-1]), dim=1)
-            x = x.masked_fill(~timemask, 0.0)
+            # x = x.masked_fill(~timemask, 0.0)
         
         # STFT
         with torch.amp.autocast(x.device.type, enabled=False):
