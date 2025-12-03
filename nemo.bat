@@ -3,7 +3,8 @@ REM NeMo 训练脚本 - 保存输出用于精度对齐 (Windows版本)
 REM 如果 GPU 检测失败，可以手动修改下面的 accelerator 为 "cpu" 或 "cuda"
 
 python scripts/masked_token_pred_pretrain_with_saver.py ^
-    --config-name nest_fast-conformer ^
+    --config-path=NeMo/examples/asr/conf/ssl/nest ^
+    --config-name=nest_fast-conformer ^
     model.train_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/train_manifest.json ^
     model.validation_ds.manifest_filepath=nest_ssl_project/data/dummy_ssl/val_manifest.json ^
     model.train_ds.batch_size=2 ^
