@@ -186,6 +186,15 @@ def main():
     print(f"\n   After preemphasis:")
     compare_tensors("preemph", x_nemo, x_nest)
     
+    # Check boundary values
+    print(f"   Sample 0 boundary (around {seq_len_time[0].item()}):")
+    print(f"     NeMo: {x_nemo[0, seq_len_time[0]-3:seq_len_time[0]+2].tolist()}")
+    print(f"     nest: {x_nest[0, seq_len_time[0]-3:seq_len_time[0]+2].tolist()}")
+    print(f"   Sample 1 boundary (around {seq_len_time[1].item()}):")
+    end_idx = min(seq_len_time[1]+2, x_nemo.shape[1])
+    print(f"     NeMo: {x_nemo[1, seq_len_time[1]-3:end_idx].tolist()}")
+    print(f"     nest: {x_nest[1, seq_len_time[1]-3:end_idx].tolist()}")
+    
     # STFT
     x_stft_nemo = nemo_feat.stft(x_nemo)
     x_stft_nest = nest_feat.stft(x_nest)
