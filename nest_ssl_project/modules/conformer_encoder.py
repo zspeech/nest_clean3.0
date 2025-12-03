@@ -1967,7 +1967,7 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
             self.pos_enc = LocalAttRelPositionalEncoding(
                 att_context_size=self.att_context_size,
                 d_model=d_model,
-                dropout_rate=dropout_pre_encoder,
+                dropout_rate=dropout,  # NeMo uses dropout, not dropout_pre_encoder for local attn
                 max_len=pos_emb_max_len,
                 xscale=self.xscale,
                 dropout_rate_emb=dropout_emb,
