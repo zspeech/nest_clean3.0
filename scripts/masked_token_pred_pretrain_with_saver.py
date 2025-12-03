@@ -330,22 +330,36 @@ def main(cfg):
     
     # Patch mask_processor to be deterministic for alignment
     if hasattr(asr_model, 'mask_processor'):
-        logging.info("Patching mask_processor to be deterministic...")
-        import types
-        def fixed_forward(self, input_feats, input_lengths):
-            # input_feats: [B, D, T]
-            masks = torch.zeros_like(input_feats)
-            # Mask frames 10 to 20
-            if input_feats.size(2) > 20:
-                masks[:, :, 10:20] = 1.0
-                masked_feats = input_feats.clone()
-                masked_feats[:, :, 10:20] = 0.0
-            else:
-                masked_feats = input_feats
-            return masked_feats, masks
+        logging.info("REPLACING mask_processor with DeterministicMasking...")
+        
+        class DeterministicMasking(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                
+            def forward(self, input_feats, input_lengths):
+                # input_feats: [B, D, T]
+                masks = torch.zeros_like(input_feats)
+                # Mask frames 10 to 20
+                if input_feats.size(2) > 20:
+                    masks[:, :, 10:20] = 1.0
+                    masked_feats = input_feats.clone()
+                    masked_feats[:, :, 10:20] = 0.0
+                else:
+                    masked_feats = input_feats
+                return masked_feats, masks
+        
+        # Replace the module
+        new_masking = DeterministicMasking()
+        # Move to correct device
+        # Note: asr_model.device might not be set yet if trainer hasn't started, but module usually on cpu init
+        
+        asr_model.mask_processor = new_masking
+        
+        # Also need to update references in wrapper if it exists
+        if hasattr(asr_model, 'pre_encoder') and hasattr(asr_model.pre_encoder, 'masking'):
+            asr_model.pre_encoder.masking = new_masking
+            logging.info("Updated mask_processor in pre_encoder wrapper")
             
-        asr_model.mask_processor.forward = types.MethodType(fixed_forward, asr_model.mask_processor)
-
     # FORCE PREPROCESSOR TO EVAL MODE for deterministic featurizer output
     # This disables dither and nb_augmentation even in training
     if hasattr(asr_model, 'preprocessor'):
