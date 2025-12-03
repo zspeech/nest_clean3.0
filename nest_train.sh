@@ -29,5 +29,5 @@ python train_with_saver.py \
     +output_dir=./saved_nest_outputs \
     seed=42 \
     save_steps="0" \
-    +load_nemo_weights=./saved_nemo_outputs/initial_weights/parameter_weights.pt
+    +load_nemo_weights=../saved_nemo_outputs/initial_weights/parameter_weights.pt
 

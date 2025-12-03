@@ -279,31 +279,51 @@ def main(cfg):
     
     # Load weights from NeMo output if specified (for alignment testing)
     nemo_weights_path = cfg.get('load_nemo_weights', None)
+    if is_global_rank_zero():
+        logger.info(f"load_nemo_weights config value: {nemo_weights_path}")
     if nemo_weights_path:
         nemo_weights_path = Path(nemo_weights_path)
+        if is_global_rank_zero():
+            logger.info(f"Resolved nemo_weights_path: {nemo_weights_path.resolve()}")
+            logger.info(f"Path exists: {nemo_weights_path.exists()}")
         if nemo_weights_path.exists():
             if is_global_rank_zero():
                 logger.info(f"Loading weights from NeMo output: {nemo_weights_path}")
             nemo_weights = torch.load(nemo_weights_path, map_location='cpu', weights_only=False)
             
+            if is_global_rank_zero():
+                logger.info(f"NeMo weights keys count: {len(nemo_weights)}")
+                logger.info(f"Model state_dict keys count: {len(asr_model.state_dict())}")
+            
             # Load weights into model
             model_state_dict = asr_model.state_dict()
             loaded_count = 0
+            missing_in_model = []
+            shape_mismatch = []
             for name, param in nemo_weights.items():
                 if name in model_state_dict:
                     if model_state_dict[name].shape == param.shape:
                         model_state_dict[name] = param
                         loaded_count += 1
                     else:
-                        if is_global_rank_zero():
-                            logger.warning(f"Shape mismatch for {name}: {model_state_dict[name].shape} vs {param.shape}")
+                        shape_mismatch.append(f"{name}: model={model_state_dict[name].shape} vs nemo={param.shape}")
+                else:
+                    missing_in_model.append(name)
             
             asr_model.load_state_dict(model_state_dict)
             if is_global_rank_zero():
                 logger.info(f"Loaded {loaded_count}/{len(nemo_weights)} weights from NeMo")
+                if missing_in_model:
+                    logger.warning(f"Keys in NeMo but not in model ({len(missing_in_model)}): {missing_in_model[:5]}...")
+                if shape_mismatch:
+                    logger.warning(f"Shape mismatches ({len(shape_mismatch)}): {shape_mismatch[:5]}...")
         else:
             if is_global_rank_zero():
                 logger.warning(f"NeMo weights path does not exist: {nemo_weights_path}")
+                logger.warning(f"Current working directory: {Path.cwd()}")
+    else:
+        if is_global_rank_zero():
+            logger.warning("load_nemo_weights not specified in config!")
     
     # Log training start from rank 0 only
     if is_global_rank_zero():
