@@ -113,14 +113,28 @@ def main():
         nemo_buffers = torch.load(nemo_dir / "buffers" / "buffers.pt", weights_only=False)
         nest_buffers = torch.load(nest_dir / "buffers" / "buffers.pt", weights_only=False)
         
-        nemo_fb = nemo_buffers.get('preprocessor.featurizer.fb') or nemo_buffers.get('preprocessor.fb')
-        nest_fb = nest_buffers.get('preprocessor.featurizer.fb') or nest_buffers.get('preprocessor.fb')
-        nemo_window = nemo_buffers.get('preprocessor.featurizer.window') or nemo_buffers.get('preprocessor.window')
-        nest_window = nest_buffers.get('preprocessor.featurizer.window') or nest_buffers.get('preprocessor.window')
+        # Get fb buffer
+        nemo_fb = nemo_buffers.get('preprocessor.featurizer.fb')
+        if nemo_fb is None:
+            nemo_fb = nemo_buffers.get('preprocessor.fb')
+        
+        nest_fb = nest_buffers.get('preprocessor.featurizer.fb')
+        if nest_fb is None:
+            nest_fb = nest_buffers.get('preprocessor.fb')
+        
+        # Get window buffer
+        nemo_window = nemo_buffers.get('preprocessor.featurizer.window')
+        if nemo_window is None:
+            nemo_window = nemo_buffers.get('preprocessor.window')
+        
+        nest_window = nest_buffers.get('preprocessor.featurizer.window')
+        if nest_window is None:
+            nest_window = nest_buffers.get('preprocessor.window')
         
         print(f"\n2. Buffers loaded successfully")
-        print(f"   fb shape: {nemo_fb.shape if nemo_fb is not None else 'None'}")
-        print(f"   window shape: {nemo_window.shape if nemo_window is not None else 'None'}")
+        print(f"   Available buffer keys: {list(nemo_buffers.keys())[:10]}...")
+        print(f"   fb shape: {nemo_fb.shape if isinstance(nemo_fb, torch.Tensor) else 'None'}")
+        print(f"   window shape: {nemo_window.shape if isinstance(nemo_window, torch.Tensor) else 'None'}")
     except Exception as e:
         print(f"\n2. Error loading buffers: {e}")
         return
@@ -132,7 +146,7 @@ def main():
     preemph = 0.97
     n_fft = 512
     hop_length = 160
-    win_length = nemo_window.shape[0] if nemo_window is not None else 400
+    win_length = nemo_window.shape[0] if isinstance(nemo_window, torch.Tensor) else 400
     log_zero_guard = 2**-24
     
     # Apply preemphasis
@@ -146,7 +160,7 @@ def main():
     nest_preemph = apply_preemph(nest_audio.clone(), nest_audio_len, preemph)
     
     # STFT
-    window = nemo_window if nemo_window is not None else torch.hann_window(win_length)
+    window = nemo_window if isinstance(nemo_window, torch.Tensor) else torch.hann_window(win_length)
     
     nemo_stft = torch.stft(
         nemo_preemph, n_fft=n_fft, hop_length=hop_length, win_length=win_length,
@@ -165,7 +179,7 @@ def main():
     nest_power = nest_mag.pow(2.0)
     
     # Mel filterbank
-    fb = nemo_fb.squeeze(0) if nemo_fb is not None else None
+    fb = nemo_fb.squeeze(0) if isinstance(nemo_fb, torch.Tensor) else None
     if fb is not None:
         nemo_mel = torch.matmul(fb, nemo_power)
         nest_mel = torch.matmul(fb, nest_power)
