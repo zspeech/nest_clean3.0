@@ -80,23 +80,32 @@ def main():
     preemph = 0.97
     log_zero_guard = 2**-24
     
-    # Check if exact_pad is used
-    # If win_length != n_fft, exact_pad adds padding
-    stft_pad_amount = (n_fft - hop_length) // 2 if win_length != n_fft else None
+    # exact_pad=False is the default in NeMo config
+    # When exact_pad=False: stft_pad_amount=None, center=True in STFT
+    # When exact_pad=True: stft_pad_amount=(n_fft-hop_length)//2, center=False
+    exact_pad = False  # Default value, not set in config
+    stft_pad_amount = (n_fft - hop_length) // 2 if exact_pad else None
     
     print(f"\n3. Parameters:")
     print(f"   n_fft: {n_fft}")
     print(f"   hop_length: {hop_length}")
     print(f"   win_length: {win_length}")
+    print(f"   exact_pad: {exact_pad}")
     print(f"   stft_pad_amount: {stft_pad_amount}")
     
     # Compute seq_len
+    # When center=True (stft_pad_amount=None), STFT pads n_fft//2 on each side
+    # Output length = 1 + (input_len + 2*pad - n_fft) // hop_length
+    #               = 1 + (input_len + n_fft - n_fft) // hop_length
+    #               = 1 + input_len // hop_length
     if stft_pad_amount is not None:
+        # exact_pad=True, center=False
         pad_amount = stft_pad_amount * 2
+        seq_len = torch.floor_divide((audio_len + pad_amount - n_fft), hop_length)
     else:
-        pad_amount = n_fft - hop_length
-    
-    seq_len = torch.floor_divide((audio_len + pad_amount - n_fft), hop_length) + 1
+        # exact_pad=False, center=True
+        # STFT with center=True: output_len = 1 + input_len // hop_length
+        seq_len = 1 + torch.floor_divide(audio_len, hop_length)
     print(f"   Computed seq_len: {seq_len.tolist()}")
     print(f"   Actual NeMo seq_len: {nemo_actual_len.tolist()}")
     
@@ -104,10 +113,14 @@ def main():
     x = audio.clone()
     seq_len_time = audio_len.clone()
     
-    # STFT padding
+    # STFT padding (only when exact_pad=True)
     if stft_pad_amount is not None:
         x = F.pad(x.unsqueeze(1), (stft_pad_amount, stft_pad_amount), "constant").squeeze(1)
         print(f"\n4. After STFT padding: shape={x.shape}")
+        center = False
+    else:
+        print(f"\n4. No manual STFT padding (center=True handles it)")
+        center = True
     
     # Preemphasis
     timemask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_len_time.unsqueeze(1)
@@ -125,7 +138,7 @@ def main():
         hop_length=hop_length,
         win_length=win_length,
         window=stft_window,
-        center=True,
+        center=center,  # True when exact_pad=False, False when exact_pad=True
         pad_mode="constant",
         return_complex=True
     )
