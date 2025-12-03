@@ -328,6 +328,24 @@ def main(cfg):
     # Create model
     asr_model = EncDecDenoiseMaskedTokenPredModel(cfg=cfg.model, trainer=trainer)
     
+    # Patch mask_processor to be deterministic for alignment
+    if hasattr(asr_model, 'mask_processor'):
+        logging.info("Patching mask_processor to be deterministic...")
+        import types
+        def fixed_forward(self, input_feats, input_lengths):
+            # input_feats: [B, D, T]
+            masks = torch.zeros_like(input_feats)
+            # Mask frames 10 to 20
+            if input_feats.size(2) > 20:
+                masks[:, :, 10:20] = 1.0
+                masked_feats = input_feats.clone()
+                masked_feats[:, :, 10:20] = 0.0
+            else:
+                masked_feats = input_feats
+            return masked_feats, masks
+            
+        asr_model.mask_processor.forward = types.MethodType(fixed_forward, asr_model.mask_processor)
+
     # FORCE PREPROCESSOR TO EVAL MODE for deterministic featurizer output
     # This disables dither and nb_augmentation even in training
     if hasattr(asr_model, 'preprocessor'):
