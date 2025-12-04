@@ -83,8 +83,8 @@ def compare_tensors(name, t1, t2, rtol=1e-4, atol=1e-5):
     return f"[{status}] {name}: max_diff={max_diff:.2e}, shape={list(t1.shape)}"
 
 
-def create_dummy_batch(batch_size=2, audio_len=16000, device='cpu'):
-    """Create dummy batch (1s audio)."""
+def create_dummy_batch(batch_size=2, audio_len=1600000, device='cpu'):
+    """Create dummy batch (10s audio to ensure masked positions exist)."""
     set_seed(42)
     return AudioNoiseBatch(
         audio=torch.randn(batch_size, audio_len, device=device),
@@ -164,7 +164,7 @@ def run_comparison(config_path=None, device='cpu'):
     
     # Create test batch (10 seconds to ensure masked positions)
     print("\n6. Creating test batch...")
-    batch = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+    batch = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
     
     # Forward pass - original
     print("\n7. Running forward pass on original model...")
@@ -208,13 +208,13 @@ def run_comparison(config_path=None, device='cpu'):
     print("\n9. Comparing training step...")
     
     # Create fresh batch for original model
-    batch1 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+    batch1 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
     set_seed(42)
     original_model.train()
     orig_train = original_model.training_step(batch1, batch_idx=0)
     
     # Create fresh batch for pure torch model (same seed produces same batch)
-    batch2 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+    batch2 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
     set_seed(42)
     pure_torch_model.train()
     pure_train_loss = pure_torch_model.training_step(batch2)
@@ -232,7 +232,7 @@ def run_comparison(config_path=None, device='cpu'):
         set_seed(42)
         original_model.eval()
         with torch.no_grad():
-            batch3 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+            batch3 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
             set_seed(42)
             orig_log_probs, orig_enc_len, orig_masks, orig_tokens = original_model.forward(
                 input_signal=batch3.audio,
@@ -247,7 +247,7 @@ def run_comparison(config_path=None, device='cpu'):
         set_seed(42)
         pure_torch_model.eval()
         with torch.no_grad():
-            batch4 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+            batch4 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
             set_seed(42)
             pure_log_probs, pure_enc_len, pure_masks, pure_tokens = pure_torch_model.forward(
                 input_signal=batch4.audio,
