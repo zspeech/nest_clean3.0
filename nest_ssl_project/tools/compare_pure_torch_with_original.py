@@ -160,6 +160,19 @@ def run_comparison(config_path=None, device='cpu'):
     original_model.eval()
     print(f"   Parameters: {sum(p.numel() for p in original_model.parameters()):,}")
     
+    # Debug: print all top-level modules
+    print("   Modules in original model:")
+    for name, module in original_model.named_children():
+        param_count = sum(p.numel() for p in module.parameters())
+        print(f"      {name}: {param_count:,} params")
+    
+    # Check if decoder_ssl exists (should have been deleted)
+    if hasattr(original_model, 'decoder_ssl'):
+        print("   WARNING: decoder_ssl still exists (should have been deleted)")
+        print(f"      decoder_ssl params: {sum(p.numel() for p in original_model.decoder_ssl.parameters()):,}")
+    if hasattr(original_model, 'decoder'):
+        print(f"   decoder exists with params: {sum(p.numel() for p in original_model.decoder.parameters()):,}")
+    
     # Create pure torch model from config file
     print("\n3. Creating pure torch model (PureTorchSSLModel)...")
     set_seed(42)
