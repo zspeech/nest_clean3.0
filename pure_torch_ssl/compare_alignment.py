@@ -156,8 +156,13 @@ def run_comparison(config_path: str, device: str = 'cuda'):
     # 2. Try to import original model
     print("\n2. Creating original model...")
     try:
-        # Try nest_ssl_project first
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nest_ssl_project'))
+        # Add parent directory to path (nest_ssl_v2 contains models/ssl_models.py)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(script_dir)  # nest_ssl_v2
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        print(f"   Looking for original model in: {parent_dir}")
+        
         from models.ssl_models import EncDecDenoiseMaskedTokenPredModel
         from omegaconf import OmegaConf, open_dict
         
@@ -176,7 +181,7 @@ def run_comparison(config_path: str, device: str = 'cuda'):
         original_model = EncDecDenoiseMaskedTokenPredModel(cfg=omega_cfg)
         original_model = original_model.to(device)
         original_model.eval()
-        print(f"   Loaded from nest_ssl_project. Parameters: {sum(p.numel() for p in original_model.parameters()):,}")
+        print(f"   Loaded successfully. Parameters: {sum(p.numel() for p in original_model.parameters()):,}")
         
     except Exception as e:
         print(f"   [ERROR] Could not load original model: {e}")
