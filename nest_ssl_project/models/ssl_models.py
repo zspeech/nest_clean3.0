@@ -49,7 +49,12 @@ from core.neural_types import (
 )
 from utils.logging import get_logger, is_global_rank_zero
 
-__all__ = ['SpeechEncDecSelfSupervisedModel', 'EncDecMaskedTokenPredModel', 'EncDecDenoiseMaskedTokenPredModel']
+__all__ = [
+    'SpeechEncDecSelfSupervisedModel', 
+    'EncDecMaskedTokenPredModel', 
+    'EncDecDenoiseMaskedTokenPredModel',
+    # Note: SimplifiedSSLModel is in ssl_models_simplified.py
+]
 
 
 logging = get_logger(__name__)
