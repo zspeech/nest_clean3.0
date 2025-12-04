@@ -14,21 +14,21 @@
 
 """
 Simplified SSL Model - A lightweight version of EncDecDenoiseMaskedTokenPredModel
-that focuses on core functionality and is easier to integrate with other frameworks.
+that maintains full compatibility and alignment with the original model.
 
-This module provides a simplified model class that:
-- Removes complex data loader setup (users handle their own data loading)
-- Removes AccessMixin and other complex mixins
-- Simplifies training/validation steps
-- Maintains PyTorch Lightning compatibility
-- Keeps core forward pass logic intact
+Key features:
+- Inherits from ModelPT for optimizer/scheduler support
+- Same forward pass logic as original (bit-exact output)
+- Simplified data loader setup
+- Removes unnecessary mixins while keeping core functionality
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, List
+from math import ceil
 import torch
 import torch.nn as nn
-from lightning.pytorch import LightningModule
-from omegaconf import DictConfig
+from lightning.pytorch import Trainer
+from omegaconf import DictConfig, OmegaConf
 
 # Import from local modules
 import sys
@@ -38,68 +38,77 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from data import ssl_dataset
+from data import audio_to_text_dataset
 from modules.ssl_modules.masking import ConvFeatureMaksingWrapper
 from core.classes import ModelPT
-from utils.logging import get_logger
+from core.classes.common import typecheck
+from core.neural_types import (
+    AudioSignal,
+    LabelsType,
+    LengthsType,
+    LogprobsType,
+    NeuralType,
+    SpectrogramType,
+)
+from utils.logging import get_logger, is_global_rank_zero
 
 __all__ = ['SimplifiedSSLModel']
 
 logging = get_logger(__name__)
 
 
-class SimplifiedSSLModel(LightningModule):
+class SimplifiedSSLModel(ModelPT):
     """
     Simplified SSL Model for denoising and masked token prediction.
     
-    This is a lightweight version that:
-    - Only handles core forward pass and loss computation
-    - Does not manage data loaders (users provide their own)
-    - Removes complex mixins and access control
-    - Maintains compatibility with PyTorch Lightning
+    This is a streamlined version of EncDecDenoiseMaskedTokenPredModel that:
+    - Maintains bit-exact forward pass alignment with original
+    - Supports optimizer/scheduler configuration via ModelPT
+    - Simplifies data loader setup
+    - Removes AccessMixin and ASRModuleMixin complexity
     
     Usage:
-        model = SimplifiedSSLModel(cfg=cfg.model)
-        # Users handle their own data loading
-        trainer = pl.Trainer(...)
-        trainer.fit(model, train_dataloader, val_dataloader)
+        model = SimplifiedSSLModel(cfg=cfg.model, trainer=trainer)
+        trainer.fit(model)
     """
     
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         """
         Initialize simplified SSL model.
         
         Args:
-            cfg: Model configuration dict containing:
-                - preprocessor: Preprocessor config
-                - encoder: Encoder config
-                - decoder: Decoder config
-                - quantizer: Quantizer config
-                - masking: Masking config
-                - loss: Loss config
-                - mask_position: "pre_conv" or "post_conv" (default: "pre_conv")
+            cfg: Model configuration (same format as EncDecDenoiseMaskedTokenPredModel)
+            trainer: PyTorch Lightning trainer
         """
-        super().__init__()
-        self.cfg = cfg
-        self.save_hyperparameters()
+        # Get world size for data loading
+        self.world_size = 1
+        if trainer is not None:
+            self.world_size = trainer.world_size
         
-        # Initialize components using ModelPT's from_config_dict
-        self.preprocessor = ModelPT.from_config_dict(cfg.preprocessor)
-        self.quantizer = ModelPT.from_config_dict(cfg.quantizer)
-        self.mask_processor = ModelPT.from_config_dict(cfg.masking)
-        self.encoder = ModelPT.from_config_dict(cfg.encoder)
-        self.decoder = ModelPT.from_config_dict(cfg.decoder)
-        self.loss = ModelPT.from_config_dict(cfg.loss)
+        # Initialize ModelPT (handles optimizer setup, etc.)
+        super().__init__(cfg=cfg, trainer=trainer)
         
-        # Handle post-conv masking if needed
-        self.pre_encoder = None
-        if cfg.get("mask_position", "pre_conv") == "post_conv":
+        # Initialize preprocessor and encoder (same order as original)
+        self.preprocessor = self.from_config_dict(self._cfg.preprocessor)
+        
+        # Handle mask_position config adjustment BEFORE creating components
+        if self._cfg.get("mask_position", "pre_conv") == "post_conv":
             # Adjust config for post-convolution masking
-            cfg.quantizer.feat_in = cfg.encoder.d_model
-            cfg.masking.feat_in = cfg.encoder.d_model
-            cfg.masking.block_size = cfg.masking.block_size // cfg.encoder.subsampling_factor
-            cfg.loss.combine_time_steps = 1
-            
-            # Wrap pre_encode with masking
+            self._cfg.quantizer.feat_in = self._cfg.encoder.d_model
+            self._cfg.masking.feat_in = self._cfg.encoder.d_model
+            self._cfg.masking.block_size = self._cfg.masking.block_size // self._cfg.encoder.subsampling_factor
+            self._cfg.loss.combine_time_steps = 1
+        
+        # Initialize components (same order as EncDecMaskedTokenPredModel)
+        self.quantizer = self.from_config_dict(self._cfg.quantizer)
+        self.mask_processor = self.from_config_dict(self._cfg.masking)
+        self.encoder = self.from_config_dict(self._cfg.encoder)
+        self.decoder = self.from_config_dict(self._cfg.decoder)
+        self.loss = self.from_config_dict(self._cfg.loss)
+        
+        # Handle post-conv masking wrapper
+        self.pre_encoder = None
+        if self._cfg.get("mask_position", "pre_conv") == "post_conv":
             self.pre_encoder = ConvFeatureMaksingWrapper(self.encoder.pre_encode, self.mask_processor)
             self.encoder.pre_encode = self.pre_encoder
         
@@ -107,47 +116,150 @@ class SimplifiedSSLModel(LightningModule):
         self.validation_step_outputs = []
         self.test_step_outputs = []
     
+    def _setup_dataloader_from_config(self, config: Optional[Dict]):
+        """Set up dataloader from config (simplified version)."""
+        audio_to_text_dataset.inject_dataloader_value_from_model_config(self.cfg, config, key='sample_rate')
+        
+        dataset = ssl_dataset.get_audio_noise_dataset_from_config(
+            config,
+            global_rank=self.global_rank,
+            world_size=self.world_size,
+        )
+        
+        if dataset is None:
+            return None
+        
+        shuffle = config.get('shuffle', True)
+        if isinstance(dataset, torch.utils.data.IterableDataset):
+            shuffle = False
+        
+        # Get collate_fn
+        collate_fn = None
+        if hasattr(dataset, 'collate_fn'):
+            collate_fn = dataset.collate_fn
+        elif hasattr(dataset, 'datasets') and len(dataset.datasets) > 0:
+            if hasattr(dataset.datasets[0], 'collate_fn'):
+                collate_fn = dataset.datasets[0].collate_fn
+        
+        num_workers = config.get('num_workers', 0)
+        pin_memory = config.get('pin_memory', False)
+        if num_workers == 0:
+            pin_memory = False
+        
+        return torch.utils.data.DataLoader(
+            dataset=dataset,
+            batch_size=config['batch_size'],
+            collate_fn=collate_fn,
+            drop_last=config.get('drop_last', False),
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+    
+    def setup_training_data(self, train_data_config: Optional[Union[DictConfig, Dict]]):
+        """Set up training data loader."""
+        if 'shuffle' not in train_data_config:
+            train_data_config['shuffle'] = True
+        self._update_dataset_config(dataset_name='train', config=train_data_config)
+        self._train_dl = self._setup_dataloader_from_config(config=train_data_config)
+        
+        # Handle IterableDataset batch count
+        if (
+            self._train_dl is not None
+            and hasattr(self._train_dl, 'dataset')
+            and isinstance(self._train_dl.dataset, torch.utils.data.IterableDataset)
+        ):
+            if self._trainer is not None and isinstance(self._trainer.limit_train_batches, float):
+                self._trainer.limit_train_batches = int(
+                    self._trainer.limit_train_batches
+                    * ceil((len(self._train_dl.dataset) / self.world_size) / train_data_config['batch_size'])
+                )
+    
+    def setup_validation_data(self, val_data_config: Optional[Union[DictConfig, Dict]]):
+        """Set up validation data loader."""
+        if 'shuffle' not in val_data_config:
+            val_data_config['shuffle'] = False
+        self._update_dataset_config(dataset_name='validation', config=val_data_config)
+        self._validation_dl = self._setup_dataloader_from_config(config=val_data_config)
+    
+    @property
+    def input_types(self) -> Optional[Dict[str, NeuralType]]:
+        if hasattr(self.preprocessor, '_sample_rate'):
+            input_signal_eltype = AudioSignal(freq=self.preprocessor._sample_rate)
+        else:
+            input_signal_eltype = AudioSignal()
+        return {
+            "input_signal": NeuralType(('B', 'T'), input_signal_eltype, optional=True),
+            "input_signal_length": NeuralType(tuple('B'), LengthsType(), optional=True),
+            "processed_signal": NeuralType(('B', 'D', 'T'), SpectrogramType(), optional=True),
+            "processed_signal_length": NeuralType(tuple('B'), LengthsType(), optional=True),
+            "noisy_input_signal": NeuralType(('B', 'T'), input_signal_eltype, optional=True),
+            "noisy_input_signal_length": NeuralType(tuple('B'), LengthsType(), optional=True),
+            "processed_noisy_signal": NeuralType(('B', 'D', 'T'), SpectrogramType(), optional=True),
+            "processed_noisy_signal_length": NeuralType(tuple('B'), LengthsType(), optional=True),
+            "apply_mask": NeuralType(optional=True),
+        }
+    
+    @property
+    def output_types(self) -> Optional[Dict[str, NeuralType]]:
+        if self._cfg.num_books == 1 and self._cfg.squeeze_single:
+            logprobs = NeuralType(('B', 'T', 'C'), LogprobsType())
+            tokens = NeuralType(('B', 'T'), LabelsType())
+        else:
+            logprobs = NeuralType(('B', 'T', 'C', 'H'), LogprobsType())
+            tokens = NeuralType(('B', 'T', 'H'), LabelsType())
+        return {
+            "logprobs": logprobs,
+            "encoded_len": NeuralType(tuple('B'), LengthsType()),
+            "masks": NeuralType(('B', 'D', 'T'), SpectrogramType()),
+            "tokens": tokens,
+        }
+    
+    @typecheck()
     def forward(
         self,
-        input_signal: Optional[torch.Tensor] = None,
-        input_signal_length: Optional[torch.Tensor] = None,
-        processed_signal: Optional[torch.Tensor] = None,
-        processed_signal_length: Optional[torch.Tensor] = None,
-        noisy_input_signal: Optional[torch.Tensor] = None,
-        noisy_input_signal_length: Optional[torch.Tensor] = None,
-        processed_noisy_signal: Optional[torch.Tensor] = None,
-        processed_noisy_signal_length: Optional[torch.Tensor] = None,
-        apply_mask: bool = False,
+        input_signal=None,
+        input_signal_length=None,
+        processed_signal=None,
+        processed_signal_length=None,
+        noise_signal=None,  # noqa - kept for API compatibility
+        noise_signal_length=None,  # noqa
+        processed_noise_signal=None,  # noqa
+        processed_noise_signal_length=None,  # noqa
+        noisy_input_signal=None,
+        noisy_input_signal_length=None,
+        processed_noisy_input_signal=None,
+        processed_noisy_input_signal_length=None,
+        apply_mask=False,
     ):
         """
-        Forward pass of the model.
+        Forward pass - EXACTLY matches EncDecDenoiseMaskedTokenPredModel.forward()
         
         Args:
-            input_signal: Clean audio signal [B, T] (optional if processed_signal provided)
-            input_signal_length: Lengths of clean audio [B] (optional if processed_signal provided)
-            processed_signal: Preprocessed clean features [B, D, T] (optional if input_signal provided)
-            processed_signal_length: Lengths of processed clean features [B] (optional if processed_signal provided)
-            noisy_input_signal: Noisy audio signal [B, T] (optional if processed_noisy_signal provided)
-            noisy_input_signal_length: Lengths of noisy audio [B] (optional if processed_noisy_signal provided)
-            processed_noisy_signal: Preprocessed noisy features [B, D, T] (optional if noisy_input_signal provided)
-            processed_noisy_signal_length: Lengths of processed noisy features [B] (optional if processed_noisy_signal provided)
-            apply_mask: Whether to apply masking (default: False)
+            input_signal: Clean audio [B, T]
+            input_signal_length: Clean audio lengths [B]
+            processed_signal: Preprocessed clean features [B, D, T]
+            processed_signal_length: Preprocessed clean lengths [B]
+            noise_signal: Noise audio (unused, for API compatibility)
+            noise_signal_length: Noise lengths (unused)
+            processed_noise_signal: Preprocessed noise (unused)
+            processed_noise_signal_length: Preprocessed noise lengths (unused)
+            noisy_input_signal: Noisy audio [B, T]
+            noisy_input_signal_length: Noisy audio lengths [B]
+            processed_noisy_input_signal: Preprocessed noisy features [B, D, T]
+            processed_noisy_input_signal_length: Preprocessed noisy lengths [B]
+            apply_mask: Whether to apply masking
         
         Returns:
             tuple: (log_probs, encoded_len, masks, tokens)
-                - log_probs: Decoder log probabilities [B, T, C] or [B, T, C, H]
-                - encoded_len: Encoded sequence lengths [B]
-                - masks: Applied masks [B, D, T]
-                - tokens: Quantized tokens [B, T] or [B, T, H]
         """
-        # Process clean signal if needed
+        # Process clean signal
         has_input_signal = input_signal is not None and input_signal_length is not None
         has_processed_signal = processed_signal is not None and processed_signal_length is not None
-        
-        if not (has_input_signal ^ has_processed_signal):
+        if (has_input_signal ^ has_processed_signal) == False:
             raise ValueError(
-                "Either (input_signal, input_signal_length) or "
-                "(processed_signal, processed_signal_length) must be provided, but not both."
+                f"{self} Arguments ``input_signal`` and ``input_signal_length`` are mutually exclusive "
+                " with ``processed_signal`` and ``processed_signal_len`` arguments."
             )
         
         if not has_processed_signal:
@@ -156,275 +268,181 @@ class SimplifiedSSLModel(LightningModule):
                 length=input_signal_length,
             )
         
-        # Process noisy signal if needed
+        # Process noisy signal
         has_noisy_input_signal = noisy_input_signal is not None and noisy_input_signal_length is not None
-        has_processed_noisy_signal = (
-            processed_noisy_signal is not None and processed_noisy_signal_length is not None
+        has_processed_noisy_input_signal = (
+            processed_noisy_input_signal is not None and processed_noisy_input_signal_length is not None
         )
-        
-        if not (has_noisy_input_signal ^ has_processed_noisy_signal):
+        if (has_noisy_input_signal ^ has_processed_noisy_input_signal) == False:
             raise ValueError(
-                "Either (noisy_input_signal, noisy_input_signal_length) or "
-                "(processed_noisy_signal, processed_noisy_signal_length) must be provided, but not both."
+                f"{self} Arguments ``noisy_input_signal`` and ``noisy_input_signal_length`` are mutually exclusive "
+                " with ``processed_noisy_input_signal`` and ``processed_noisy_input_signal_len`` arguments."
             )
-        
-        if not has_processed_noisy_signal:
-            processed_noisy_signal, processed_noisy_signal_length = self.preprocessor(
+        if not has_processed_noisy_input_signal:
+            processed_noisy_input_signal, processed_noisy_input_signal_length = self.preprocessor(
                 input_signal=noisy_input_signal,
                 length=noisy_input_signal_length,
             )
         
-        # Generate tokens from clean signal
+        # Core forward logic - EXACTLY matches original
         if self.pre_encoder is not None:
-            # Post-conv masking: get features after subsampling
+            # mask after convolutional sub-sampling
             feats, _ = self.pre_encoder.pre_encode(x=processed_signal, lengths=processed_signal_length)
             _, tokens = self.quantizer(input_signal=feats.transpose(1, 2))
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
             
-            # Encode noisy signal
             encoded, encoded_len = self.encoder(
-                audio_signal=processed_noisy_signal, length=processed_noisy_signal_length
+                audio_signal=processed_noisy_input_signal, length=processed_noisy_input_signal_length
             )
             masks = self.pre_encoder.get_current_mask()
         else:
-            # Pre-conv masking: quantize clean signal
             _, tokens = self.quantizer(input_signal=processed_signal)
-            
-            # Apply masking to noisy signal
             if apply_mask:
                 masked_signal, masks = self.mask_processor(
-                    input_feats=processed_noisy_signal, input_lengths=processed_noisy_signal_length
+                    input_feats=processed_noisy_input_signal, input_lengths=processed_noisy_input_signal_length
                 )
             else:
-                masked_signal = processed_noisy_signal
-                masks = torch.zeros_like(processed_noisy_signal)
+                masked_signal = processed_noisy_input_signal
+                masks = torch.zeros_like(processed_noisy_input_signal)
             
-            # Encode masked noisy signal
-            encoded, encoded_len = self.encoder(
-                audio_signal=masked_signal, length=processed_noisy_signal_length
-            )
+            encoded, encoded_len = self.encoder(audio_signal=masked_signal, length=processed_noisy_input_signal_length)
         
-        # Decode
         log_probs = self.decoder(encoder_output=encoded)
         
         return log_probs, encoded_len, masks, tokens
     
-    def training_step(self, batch, batch_idx: int):
-        """
-        Training step.
-        
-        Args:
-            batch: Batch data. Can be:
-                - ssl_dataset.AudioNoiseBatch object
-                - Tuple/list: (audio, audio_len, noise, noise_len, noisy_audio, noisy_audio_len)
-            batch_idx: Batch index
-        
-        Returns:
-            dict: {'loss': loss_value, 'log': tensorboard_logs}
-        """
-        # Handle different batch formats
-        if isinstance(batch, ssl_dataset.AudioNoiseBatch):
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch.audio,
-                input_signal_length=batch.audio_len,
-                noisy_input_signal=batch.noisy_audio,
-                noisy_input_signal_length=batch.noisy_audio_len,
-                apply_mask=True,
-            )
-        elif isinstance(batch, (tuple, list)) and len(batch) >= 6:
-            # Assume format: (audio, audio_len, noise, noise_len, noisy_audio, noisy_audio_len)
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch[0],
-                input_signal_length=batch[1],
-                noisy_input_signal=batch[4],
-                noisy_input_signal_length=batch[5],
-                apply_mask=True,
-            )
-        else:
-            raise ValueError(f"Unsupported batch format: {type(batch)}")
-        
-        # Compute loss
-        loss_value = self.loss(
-            masks=masks,
-            decoder_outputs=log_probs,
-            targets=tokens,
-            decoder_lengths=encoded_len,
+    def training_step(self, batch: ssl_dataset.AudioNoiseBatch, batch_idx: int):
+        """Training step - matches original exactly."""
+        log_probs, encoded_len, masks, tokens = self.forward(
+            input_signal=batch.audio,
+            input_signal_length=batch.audio_len,
+            noise_signal=batch.noise,
+            noise_signal_length=batch.noise_len,
+            noisy_input_signal=batch.noisy_audio,
+            noisy_input_signal_length=batch.noisy_audio_len,
+            apply_mask=True,
         )
         
-        # Logging
-        self.log('train_loss', loss_value, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        
-        # Get learning rate if optimizer is configured
-        lr = 0.0
-        if self.optimizers() is not None:
-            opt = self.optimizers()
-            if isinstance(opt, list):
-                opt = opt[0]
-            if hasattr(opt, 'param_groups') and len(opt.param_groups) > 0:
-                lr = opt.param_groups[0].get('lr', 0.0)
+        loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
         
         tensorboard_logs = {
-            'learning_rate': lr,
-            'global_step': self.global_step,
+            'learning_rate': self._optimizer.param_groups[0]['lr'] if self._optimizer is not None else 0.0,
+            'global_step': self.trainer.global_step if self.trainer is not None else 0,
             'train_loss': loss_value,
         }
         
         return {'loss': loss_value, 'log': tensorboard_logs}
     
-    def validation_step(self, batch, batch_idx: int, dataloader_idx: int = 0):
-        """
-        Validation step.
-        
-        Args:
-            batch: Batch data (same format as training_step)
-            batch_idx: Batch index
-            dataloader_idx: Dataloader index (for multiple validation dataloaders)
-        
-        Returns:
-            dict: {'val_loss': loss_value}
-        """
-        # Handle different batch formats
-        if isinstance(batch, ssl_dataset.AudioNoiseBatch):
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch.audio,
-                input_signal_length=batch.audio_len,
-                noisy_input_signal=batch.noisy_audio,
-                noisy_input_signal_length=batch.noisy_audio_len,
-                apply_mask=True,
-            )
-        elif isinstance(batch, (tuple, list)) and len(batch) >= 6:
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch[0],
-                input_signal_length=batch[1],
-                noisy_input_signal=batch[4],
-                noisy_input_signal_length=batch[5],
-                apply_mask=True,
-            )
-        else:
-            raise ValueError(f"Unsupported batch format: {type(batch)}")
-        
-        # Compute loss
-        loss_value = self.loss(
-            masks=masks,
-            decoder_outputs=log_probs,
-            targets=tokens,
-            decoder_lengths=encoded_len,
+    @torch.no_grad()
+    def inference_pass(
+        self,
+        batch: ssl_dataset.AudioNoiseBatch,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        mode: str = 'val',
+        apply_mask: bool = True,
+    ):
+        """Inference pass for validation/test."""
+        log_probs, encoded_len, masks, tokens = self.forward(
+            input_signal=batch.audio,
+            input_signal_length=batch.audio_len,
+            noise_signal=batch.noise,
+            noise_signal_length=batch.noise_len,
+            noisy_input_signal=batch.noisy_audio,
+            noisy_input_signal_length=batch.noisy_audio_len,
+            apply_mask=apply_mask,
         )
         
-        # Store for epoch end
-        if isinstance(self.validation_step_outputs, list):
-            if dataloader_idx >= len(self.validation_step_outputs):
-                self.validation_step_outputs.extend([[]] * (dataloader_idx + 1 - len(self.validation_step_outputs)))
-            self.validation_step_outputs[dataloader_idx].append({'val_loss': loss_value})
-        else:
-            self.validation_step_outputs.append({'val_loss': loss_value})
+        loss_value = self.loss(masks=masks, decoder_outputs=log_probs, targets=tokens, decoder_lengths=encoded_len)
         
-        self.log('val_loss', loss_value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
-        
-        return {'val_loss': loss_value}
+        return {f'{mode}_loss': loss_value}
     
-    def test_step(self, batch, batch_idx: int, dataloader_idx: int = 0):
-        """
-        Test step.
-        
-        Args:
-            batch: Batch data (same format as training_step)
-            batch_idx: Batch index
-            dataloader_idx: Dataloader index
-        
-        Returns:
-            dict: {'test_loss': loss_value}
-        """
-        # Handle different batch formats
-        if isinstance(batch, ssl_dataset.AudioNoiseBatch):
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch.audio,
-                input_signal_length=batch.audio_len,
-                noisy_input_signal=batch.noisy_audio,
-                noisy_input_signal_length=batch.noisy_audio_len,
-                apply_mask=True,
-            )
-        elif isinstance(batch, (tuple, list)) and len(batch) >= 6:
-            log_probs, encoded_len, masks, tokens = self.forward(
-                input_signal=batch[0],
-                input_signal_length=batch[1],
-                noisy_input_signal=batch[4],
-                noisy_input_signal_length=batch[5],
-                apply_mask=True,
-            )
+    def validation_step(self, batch, batch_idx=0, dataloader_idx=0):
+        """Validation step."""
+        metrics = self.inference_pass(batch, batch_idx, dataloader_idx, apply_mask=True)
+        if type(self.trainer.val_dataloaders) == list and len(self.trainer.val_dataloaders) > 1:
+            if len(self.validation_step_outputs) <= dataloader_idx:
+                self.validation_step_outputs.extend([[]] * (dataloader_idx + 1 - len(self.validation_step_outputs)))
+            self.validation_step_outputs[dataloader_idx].append(metrics)
         else:
-            raise ValueError(f"Unsupported batch format: {type(batch)}")
-        
-        # Compute loss
-        loss_value = self.loss(
-            masks=masks,
-            decoder_outputs=log_probs,
-            targets=tokens,
-            decoder_lengths=encoded_len,
-        )
-        
-        # Store for epoch end
-        if isinstance(self.test_step_outputs, list):
-            if dataloader_idx >= len(self.test_step_outputs):
+            self.validation_step_outputs.append(metrics)
+        return metrics
+    
+    def test_step(self, batch, batch_idx=0, dataloader_idx=0):
+        """Test step."""
+        metrics = self.inference_pass(batch, batch_idx, dataloader_idx, mode="test", apply_mask=True)
+        if type(self.trainer.test_dataloaders) == list and len(self.trainer.test_dataloaders) > 1:
+            if len(self.test_step_outputs) <= dataloader_idx:
                 self.test_step_outputs.extend([[]] * (dataloader_idx + 1 - len(self.test_step_outputs)))
-            self.test_step_outputs[dataloader_idx].append({'test_loss': loss_value})
+            self.test_step_outputs[dataloader_idx].append(metrics)
         else:
-            self.test_step_outputs.append({'test_loss': loss_value})
+            self.test_step_outputs.append(metrics)
+        return metrics
+    
+    def multi_validation_epoch_end(self, outputs: list, dataloader_idx: int = 0):
+        """Aggregate validation outputs."""
+        loss_list = []
+        for i, x in enumerate(outputs):
+            if not isinstance(x, dict):
+                logging.warning(f'Batch {i} output is not a dictionary: {x}')
+            if 'val_loss' in x:
+                loss_list.append(x['val_loss'])
         
-        self.log('test_loss', loss_value, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        if len(loss_list) == 0:
+            return {}
         
-        return {'test_loss': loss_value}
+        val_loss_mean = torch.stack(loss_list).mean()
+        tensorboard_logs = {'val_loss': val_loss_mean}
+        return {'val_loss': val_loss_mean, 'log': tensorboard_logs}
+    
+    def multi_test_epoch_end(self, outputs, dataloader_idx: int = 0):
+        """Aggregate test outputs."""
+        test_loss_mean = torch.stack([x['test_loss'] for x in outputs]).mean()
+        tensorboard_logs = {'test_loss': test_loss_mean}
+        return {'test_loss': test_loss_mean, 'log': tensorboard_logs}
     
     def on_validation_epoch_end(self):
-        """Called at the end of validation epoch."""
+        """Called at end of validation epoch."""
         if not self.validation_step_outputs:
-            return
+            return {}
         
-        # Handle single or multiple dataloaders
         if isinstance(self.validation_step_outputs[0], dict):
-            # Single dataloader
-            val_losses = [x['val_loss'] for x in self.validation_step_outputs]
-            val_loss_mean = torch.stack(val_losses).mean()
-            self.log('val_loss', val_loss_mean, on_epoch=True, sync_dist=True)
+            output_dict = self.multi_validation_epoch_end(self.validation_step_outputs, dataloader_idx=0)
+            if output_dict and 'log' in output_dict:
+                self.log_dict(output_dict.pop('log'), on_epoch=True)
             self.validation_step_outputs.clear()
+            return output_dict
         else:
-            # Multiple dataloaders
-            for dataloader_idx, outputs in enumerate(self.validation_step_outputs):
-                if outputs:
-                    val_losses = [x['val_loss'] for x in outputs]
-                    val_loss_mean = torch.stack(val_losses).mean()
-                    self.log(f'val_loss_dl{dataloader_idx}', val_loss_mean, on_epoch=True, sync_dist=True)
+            for dataloader_idx, val_outputs in enumerate(self.validation_step_outputs):
+                if len(val_outputs) > 0:
+                    self.multi_validation_epoch_end(val_outputs, dataloader_idx=dataloader_idx)
                     self.validation_step_outputs[dataloader_idx].clear()
+        return {}
     
     def on_test_epoch_end(self):
-        """Called at the end of test epoch."""
+        """Called at end of test epoch."""
         if not self.test_step_outputs:
-            return
+            return {}
         
-        # Handle single or multiple dataloaders
         if isinstance(self.test_step_outputs[0], dict):
-            # Single dataloader
-            test_losses = [x['test_loss'] for x in self.test_step_outputs]
-            test_loss_mean = torch.stack(test_losses).mean()
-            self.log('test_loss', test_loss_mean, on_epoch=True, sync_dist=True)
+            output_dict = self.multi_test_epoch_end(self.test_step_outputs, dataloader_idx=0)
+            if output_dict and 'test_loss' in output_dict:
+                self.log('test_loss', output_dict['test_loss'], on_epoch=True, sync_dist=True)
             self.test_step_outputs.clear()
+            return output_dict
         else:
-            # Multiple dataloaders
-            for dataloader_idx, outputs in enumerate(self.test_step_outputs):
-                if outputs:
-                    test_losses = [x['test_loss'] for x in outputs]
-                    test_loss_mean = torch.stack(test_losses).mean()
-                    self.log(f'test_loss_dl{dataloader_idx}', test_loss_mean, on_epoch=True, sync_dist=True)
+            for dataloader_idx, test_outputs in enumerate(self.test_step_outputs):
+                if len(test_outputs) > 0:
+                    self.multi_test_epoch_end(test_outputs, dataloader_idx=dataloader_idx)
                     self.test_step_outputs[dataloader_idx].clear()
+        return {}
     
-    def configure_optimizers(self):
-        """
-        Configure optimizers and learning rate schedulers.
-        
-        Users should override this method or configure optimizers via config.
-        This is a placeholder that returns None - users must implement their own.
-        """
-        # This should be implemented by users or via config
-        # For compatibility, you can use ModelPT's optimizer setup
-        return None
-
+    @classmethod
+    def list_available_models(cls):
+        """List available models (none for simplified version)."""
+        return []
+    
+    def transfer_batch_to_device(self, batch: Any, device: torch.device, dataloader_idx: int) -> Any:
+        """Transfer batch to device with non_blocking for speed."""
+        from utils.device_utils import move_data_to_device
+        return move_data_to_device(batch, device, non_blocking=True)
