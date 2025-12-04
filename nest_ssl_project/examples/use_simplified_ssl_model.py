@@ -3,134 +3,72 @@
 Example script showing how to use SimplifiedSSLModel.
 
 This demonstrates:
-1. How to create the simplified model
-2. How to set up data loaders (users handle their own)
-3. How to train with PyTorch Lightning
+1. Creating the simplified model
+2. Training with the standard training script
+3. Verifying alignment with original model
 """
 
-import lightning.pytorch as pl
-from omegaconf import DictConfig, OmegaConf
 import torch
+from omegaconf import OmegaConf
 from pathlib import Path
+import sys
+import os
 
-# Import the simplified model
-from models.ssl_models_simplified import SimplifiedSSLModel
-
-# Import data utilities (users can use their own data loading)
-from data import ssl_dataset
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 
 
-def create_simplified_model(cfg_path: str = None, cfg: DictConfig = None):
-    """
-    Create a SimplifiedSSLModel instance.
+def example_create_model():
+    """Example: Create SimplifiedSSLModel from config."""
+    from models.ssl_models_simplified import SimplifiedSSLModel
     
-    Args:
-        cfg_path: Path to config file (optional)
-        cfg: Config dict (optional, if cfg_path not provided)
+    # Load config
+    config_path = os.path.join(project_root, "config", "nest_fast-conformer.yaml")
+    cfg = OmegaConf.load(config_path)
     
-    Returns:
-        SimplifiedSSLModel instance
-    """
-    if cfg_path:
-        cfg = OmegaConf.load(cfg_path)
+    # Create model (no trainer needed for inference)
+    model = SimplifiedSSLModel(cfg=cfg.model, trainer=None)
     
-    if cfg is None:
-        raise ValueError("Either cfg_path or cfg must be provided")
-    
-    # Create model
-    model = SimplifiedSSLModel(cfg=cfg.model)
+    print(f"Model created: {type(model).__name__}")
+    print(f"Number of parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     return model
 
 
-def example_training_with_custom_dataloader():
-    """
-    Example: Training with custom data loader.
-    Users handle their own data loading.
-    """
+def example_forward_pass():
+    """Example: Run forward pass with dummy data."""
+    from models.ssl_models_simplified import SimplifiedSSLModel
+    from data.ssl_dataset import AudioNoiseBatch
+    
     # Load config
-    cfg = OmegaConf.load("config/nest_fast-conformer.yaml")  # Adjust path as needed
+    config_path = os.path.join(project_root, "config", "nest_fast-conformer.yaml")
+    cfg = OmegaConf.load(config_path)
     
     # Create model
-    model = SimplifiedSSLModel(cfg=cfg.model)
-    
-    # Users create their own data loaders
-    # Example: Using the existing SSL dataset utilities
-    train_dataset = ssl_dataset.get_audio_noise_dataset_from_config(
-        cfg.model.train_ds,
-        global_rank=0,  # Adjust for DDP
-        world_size=1,   # Adjust for DDP
-    )
-    
-    train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_dataset,
-        batch_size=cfg.model.train_ds.batch_size,
-        collate_fn=train_dataset.collate_fn if hasattr(train_dataset, 'collate_fn') else None,
-        shuffle=True,
-        num_workers=4,
-    )
-    
-    val_dataset = ssl_dataset.get_audio_noise_dataset_from_config(
-        cfg.model.validation_ds,
-        global_rank=0,
-        world_size=1,
-    )
-    
-    val_dataloader = torch.utils.data.DataLoader(
-        dataset=val_dataset,
-        batch_size=cfg.model.validation_ds.batch_size,
-        collate_fn=val_dataset.collate_fn if hasattr(val_dataset, 'collate_fn') else None,
-        shuffle=False,
-        num_workers=4,
-    )
-    
-    # Configure optimizer (users can override configure_optimizers or set it up manually)
-    # For now, we'll use a simple setup
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg.model.optim.lr,
-        betas=cfg.model.optim.betas,
-        weight_decay=cfg.model.optim.weight_decay,
-    )
-    
-    # Create trainer
-    trainer = pl.Trainer(
-        max_epochs=cfg.trainer.max_epochs,
-        devices=cfg.trainer.devices,
-        accelerator=cfg.trainer.accelerator,
-        # ... other trainer configs
-    )
-    
-    # Train
-    trainer.fit(model, train_dataloader, val_dataloader)
-
-
-def example_forward_only():
-    """
-    Example: Using the model for forward pass only (inference).
-    """
-    # Load config
-    cfg = OmegaConf.load("config/nest_fast-conformer.yaml")
-    
-    # Create model
-    model = SimplifiedSSLModel(cfg=cfg.model)
+    model = SimplifiedSSLModel(cfg=cfg.model, trainer=None)
     model.eval()
     
-    # Create dummy inputs
+    # Create dummy batch
     batch_size = 2
-    audio_length = 16000
-    audio = torch.randn(batch_size, audio_length)
-    audio_len = torch.tensor([audio_length, audio_length])
-    noisy_audio = torch.randn(batch_size, audio_length)
-    noisy_audio_len = torch.tensor([audio_length, audio_length])
+    audio_len = 16000
+    
+    batch = AudioNoiseBatch(
+        audio=torch.randn(batch_size, audio_len),
+        audio_len=torch.tensor([audio_len, audio_len], dtype=torch.int32),
+        noise=torch.randn(batch_size, audio_len),
+        noise_len=torch.tensor([audio_len, audio_len], dtype=torch.int32),
+        noisy_audio=torch.randn(batch_size, audio_len),
+        noisy_audio_len=torch.tensor([audio_len, audio_len], dtype=torch.int32),
+    )
     
     # Forward pass
     with torch.no_grad():
         log_probs, encoded_len, masks, tokens = model.forward(
-            input_signal=audio,
-            input_signal_length=audio_len,
-            noisy_input_signal=noisy_audio,
-            noisy_input_signal_length=noisy_audio_len,
+            input_signal=batch.audio,
+            input_signal_length=batch.audio_len,
+            noisy_input_signal=batch.noisy_audio,
+            noisy_input_signal_length=batch.noisy_audio_len,
             apply_mask=True,
         )
     
@@ -140,42 +78,75 @@ def example_forward_only():
     print(f"Tokens shape: {tokens.shape}")
 
 
-def example_with_custom_batch_format():
+def example_training():
     """
-    Example: Using custom batch format (tuple/list instead of AudioNoiseBatch).
+    Example: Training with SimplifiedSSLModel.
+    
+    Run this command from the nest_ssl_project directory:
+    
+    ```bash
+    python train_simplified.py \
+        model.train_ds.manifest_filepath=<path to train manifest> \
+        model.train_ds.noise_manifest=<path to noise manifest> \
+        model.validation_ds.manifest_filepath=<path to val manifest> \
+        model.validation_ds.noise_manifest=<path to noise manifest> \
+        trainer.devices=1 \
+        trainer.accelerator="gpu" \
+        trainer.max_epochs=10
+    ```
     """
-    cfg = OmegaConf.load("config/nest_fast-conformer.yaml")
-    model = SimplifiedSSLModel(cfg=cfg.model)
+    print(__doc__)
+    print(example_training.__doc__)
+
+
+def example_verify_alignment():
+    """
+    Example: Verify that SimplifiedSSLModel aligns with original.
     
-    # Custom batch format: (audio, audio_len, noise, noise_len, noisy_audio, noisy_audio_len)
-    batch_size = 2
-    audio_length = 16000
+    Run this command:
     
-    batch = (
-        torch.randn(batch_size, audio_length),  # audio
-        torch.tensor([audio_length, audio_length]),  # audio_len
-        torch.randn(batch_size, audio_length),  # noise
-        torch.tensor([audio_length, audio_length]),  # noise_len
-        torch.randn(batch_size, audio_length),  # noisy_audio
-        torch.tensor([audio_length, audio_length]),  # noisy_audio_len
-    )
+    ```bash
+    python tools/verify_simplified_alignment.py --device cpu
+    ```
     
-    # Training step accepts this format
-    output = model.training_step(batch, batch_idx=0)
-    print(f"Loss: {output['loss']}")
+    This will:
+    1. Create both original and simplified models
+    2. Copy weights from original to simplified
+    3. Run forward pass with same input
+    4. Compare outputs bit-for-bit
+    """
+    print(example_verify_alignment.__doc__)
 
 
 if __name__ == '__main__':
     print("""
-    SimplifiedSSLModel Usage Examples:
-    
-    1. Forward pass only:
-       python -c "from examples.use_simplified_ssl_model import example_forward_only; example_forward_only()"
-    
-    2. Training with custom dataloader:
-       python -c "from examples.use_simplified_ssl_model import example_training_with_custom_dataloader; example_training_with_custom_dataloader()"
-    
-    3. Custom batch format:
-       python -c "from examples.use_simplified_ssl_model import example_with_custom_batch_format; example_with_custom_batch_format()"
-    """)
+SimplifiedSSLModel Examples
+===========================
 
+The SimplifiedSSLModel is a streamlined version of EncDecDenoiseMaskedTokenPredModel that:
+- Maintains bit-exact forward pass alignment with the original
+- Supports optimizer/scheduler configuration via ModelPT
+- Simplifies data loader setup
+- Removes unnecessary mixins while keeping core functionality
+
+Available examples:
+
+1. Create model:
+   from examples.use_simplified_ssl_model import example_create_model
+   model = example_create_model()
+
+2. Run forward pass:
+   from examples.use_simplified_ssl_model import example_forward_pass
+   example_forward_pass()
+
+3. Training:
+   python train_simplified.py --help
+
+4. Verify alignment:
+   python tools/verify_simplified_alignment.py --device cpu
+
+Files:
+- models/ssl_models_simplified.py - SimplifiedSSLModel class
+- train_simplified.py - Training script
+- tools/verify_simplified_alignment.py - Alignment verification
+    """)
