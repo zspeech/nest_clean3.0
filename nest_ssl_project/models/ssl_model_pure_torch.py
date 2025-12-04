@@ -22,17 +22,53 @@ This is a standalone implementation that:
 - Simple training loop interface
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 import torch
 import torch.nn as nn
 import numpy as np
-from omegaconf import DictConfig, OmegaConf, open_dict
+import yaml
 
 import sys
 import os
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
+
+def _load_yaml_config(config_path: str) -> dict:
+    """Load YAML config and resolve ${...} interpolations."""
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+    
+    def resolve_interpolations(obj, root):
+        """Recursively resolve ${path.to.value} interpolations."""
+        if isinstance(obj, dict):
+            return {k: resolve_interpolations(v, root) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [resolve_interpolations(v, root) for v in obj]
+        elif isinstance(obj, str) and obj.startswith('${') and obj.endswith('}'):
+            path = obj[2:-1].split('.')
+            val = root
+            for p in path:
+                if isinstance(val, dict):
+                    val = val.get(p, obj)
+                else:
+                    return obj
+            return val
+        return obj
+    
+    return resolve_interpolations(cfg, cfg)
+
+
+def _get_nested(cfg: dict, *keys, default=None):
+    """Safely get nested dict value."""
+    val = cfg
+    for k in keys:
+        if isinstance(val, dict):
+            val = val.get(k, default)
+        else:
+            return default
+    return val if val is not None else default
 
 # Direct module imports (no Serialization)
 from modules.audio_preprocessing import AudioToMelSpectrogramPreprocessor
@@ -280,43 +316,39 @@ class PureTorchSSLModel(nn.Module):
             PureTorchSSLModel instance
         """
         print(f"Loading config from: {config_path}")
-        cfg = OmegaConf.load(config_path)
+        cfg = _load_yaml_config(config_path)
         
         # Extract model config
-        model_cfg = cfg.model if 'model' in cfg else cfg
-        
-        # Resolve interpolations
-        OmegaConf.resolve(cfg)
-        model_cfg = cfg.model if 'model' in cfg else cfg
+        model_cfg = cfg.get('model', cfg)
         
         return cls(
             # Preprocessor
             sample_rate=model_cfg.get('sample_rate', 16000),
-            features=model_cfg.preprocessor.get('features', 80),
-            window_size=model_cfg.preprocessor.get('window_size', 0.025),
-            window_stride=model_cfg.preprocessor.get('window_stride', 0.01),
-            n_fft=model_cfg.preprocessor.get('n_fft', 512),
-            normalize=model_cfg.preprocessor.get('normalize', 'per_feature'),
+            features=_get_nested(model_cfg, 'preprocessor', 'features', default=80),
+            window_size=_get_nested(model_cfg, 'preprocessor', 'window_size', default=0.025),
+            window_stride=_get_nested(model_cfg, 'preprocessor', 'window_stride', default=0.01),
+            n_fft=_get_nested(model_cfg, 'preprocessor', 'n_fft', default=512),
+            normalize=_get_nested(model_cfg, 'preprocessor', 'normalize', default='per_feature'),
             # Encoder
-            n_layers=model_cfg.encoder.get('n_layers', 17),
-            d_model=model_cfg.encoder.get('d_model', 512),
-            n_heads=model_cfg.encoder.get('n_heads', 8),
-            subsampling=model_cfg.encoder.get('subsampling', 'dw_striding'),
-            subsampling_factor=model_cfg.encoder.get('subsampling_factor', 8),
-            subsampling_conv_channels=model_cfg.encoder.get('subsampling_conv_channels', 256),
-            ff_expansion_factor=model_cfg.encoder.get('ff_expansion_factor', 4),
-            conv_kernel_size=model_cfg.encoder.get('conv_kernel_size', 9),
-            dropout=model_cfg.encoder.get('dropout', 0.1),
+            n_layers=_get_nested(model_cfg, 'encoder', 'n_layers', default=17),
+            d_model=_get_nested(model_cfg, 'encoder', 'd_model', default=512),
+            n_heads=_get_nested(model_cfg, 'encoder', 'n_heads', default=8),
+            subsampling=_get_nested(model_cfg, 'encoder', 'subsampling', default='dw_striding'),
+            subsampling_factor=_get_nested(model_cfg, 'encoder', 'subsampling_factor', default=8),
+            subsampling_conv_channels=_get_nested(model_cfg, 'encoder', 'subsampling_conv_channels', default=256),
+            ff_expansion_factor=_get_nested(model_cfg, 'encoder', 'ff_expansion_factor', default=4),
+            conv_kernel_size=_get_nested(model_cfg, 'encoder', 'conv_kernel_size', default=9),
+            dropout=_get_nested(model_cfg, 'encoder', 'dropout', default=0.1),
             # Quantizer
             num_classes=model_cfg.get('num_classes', 8192),
             num_books=model_cfg.get('num_books', 1),
             code_dim=model_cfg.get('code_dim', 16),
             squeeze_single=model_cfg.get('squeeze_single', False),
             # Masking
-            block_size=model_cfg.masking.get('block_size', 40),
-            mask_prob=model_cfg.masking.get('mask_prob', 0.01),
+            block_size=_get_nested(model_cfg, 'masking', 'block_size', default=40),
+            mask_prob=_get_nested(model_cfg, 'masking', 'mask_prob', default=0.01),
             # Loss
-            mask_threshold=model_cfg.loss.get('mask_threshold', 0.8),
+            mask_threshold=_get_nested(model_cfg, 'loss', 'mask_threshold', default=0.8),
             # Mask position
             mask_position=model_cfg.get('mask_position', 'pre_conv'),
         )
@@ -552,73 +584,60 @@ class PureTorchSSLModel(nn.Module):
         }
 
 
-def create_optimizer(model: nn.Module, cfg: DictConfig) -> torch.optim.Optimizer:
+def create_optimizer(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:
     """
-    Create optimizer from config.
+    Create optimizer from config dict.
     
     Args:
         model: The model to optimize
-        cfg: Config containing optim section with name, lr, betas, weight_decay
+        cfg: Config dict containing model.optim section
     
     Returns:
         Optimizer instance
     """
-    optim_cfg = cfg.model.optim
+    model_cfg = cfg.get('model', cfg)
+    optim_cfg = model_cfg.get('optim', {})
     optim_name = optim_cfg.get('name', 'adamw').lower()
     lr = optim_cfg.get('lr', 1e-4)
     betas = optim_cfg.get('betas', [0.9, 0.999])
     weight_decay = optim_cfg.get('weight_decay', 0.0)
     
-    # Convert OmegaConf list to tuple
-    if hasattr(betas, '__iter__') and not isinstance(betas, tuple):
+    if isinstance(betas, list):
         betas = tuple(betas)
     
     if optim_name == 'adamw':
-        return torch.optim.AdamW(
-            model.parameters(),
-            lr=lr,
-            betas=betas,
-            weight_decay=weight_decay,
-        )
+        return torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
     elif optim_name == 'adam':
-        return torch.optim.Adam(
-            model.parameters(),
-            lr=lr,
-            betas=betas,
-            weight_decay=weight_decay,
-        )
+        return torch.optim.Adam(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
     elif optim_name == 'sgd':
-        return torch.optim.SGD(
-            model.parameters(),
-            lr=lr,
-            momentum=optim_cfg.get('momentum', 0.9),
-            weight_decay=weight_decay,
-        )
+        return torch.optim.SGD(model.parameters(), lr=lr, momentum=optim_cfg.get('momentum', 0.9), weight_decay=weight_decay)
     else:
         raise ValueError(f"Unknown optimizer: {optim_name}")
 
 
-def create_scheduler(optimizer: torch.optim.Optimizer, cfg: DictConfig, num_training_steps: int = None):
+def create_scheduler(optimizer: torch.optim.Optimizer, cfg: dict, num_training_steps: int = None):
     """
-    Create learning rate scheduler from config.
+    Create learning rate scheduler from config dict.
     
     Args:
         optimizer: The optimizer to schedule
-        cfg: Config containing optim.sched section
+        cfg: Config dict containing model.optim.sched section
         num_training_steps: Total training steps (optional)
     
     Returns:
         Scheduler instance or None
     """
-    if 'sched' not in cfg.model.optim:
+    model_cfg = cfg.get('model', cfg)
+    optim_cfg = model_cfg.get('optim', {})
+    sched_cfg = optim_cfg.get('sched', None)
+    
+    if sched_cfg is None:
         return None
     
-    sched_cfg = cfg.model.optim.sched
     sched_name = sched_cfg.get('name', 'noam').lower()
     
-    if sched_name == 'noamannealing' or sched_name == 'noam':
-        # Noam/Transformer scheduler with warmup
-        d_model = sched_cfg.get('d_model', cfg.model.encoder.d_model)
+    if sched_name in ('noamannealing', 'noam'):
+        d_model = sched_cfg.get('d_model', _get_nested(model_cfg, 'encoder', 'd_model', default=512))
         warmup_steps = sched_cfg.get('warmup_steps', 10000)
         min_lr = sched_cfg.get('min_lr', 1e-6)
         
@@ -632,17 +651,18 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: DictConfig, num_trai
     
     elif sched_name == 'cosine':
         warmup_steps = sched_cfg.get('warmup_steps', 1000)
+        max_steps = num_training_steps or 100000
         
         def cosine_with_warmup(step):
             if step < warmup_steps:
                 return step / warmup_steps
-            progress = (step - warmup_steps) / max(1, num_training_steps - warmup_steps)
+            progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
             return 0.5 * (1 + np.cos(np.pi * progress))
         
         return torch.optim.lr_scheduler.LambdaLR(optimizer, cosine_with_warmup)
     
     elif sched_name == 'constant':
-        return None  # No scheduling
+        return None
     
     else:
         print(f"Warning: Unknown scheduler '{sched_name}', using constant LR")
