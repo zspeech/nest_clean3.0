@@ -28,7 +28,7 @@ from math import ceil
 import torch
 import torch.nn as nn
 from lightning.pytorch import Trainer
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 # Import from local modules
 import sys
@@ -78,12 +78,26 @@ class SimplifiedSSLModel(ModelPT):
         
         Args:
             cfg: Model configuration (same format as EncDecDenoiseMaskedTokenPredModel)
-            trainer: PyTorch Lightning trainer
+            trainer: PyTorch Lightning trainer (optional)
         """
-        # Get world size for data loading
+        # Get world size for data loading (before super().__init__)
         self.world_size = 1
         if trainer is not None:
-            self.world_size = trainer.world_size
+            if hasattr(trainer, 'world_size'):
+                self.world_size = trainer.world_size
+            elif hasattr(trainer, 'num_devices') and hasattr(trainer, 'num_nodes'):
+                self.world_size = trainer.num_devices * trainer.num_nodes
+        
+        # Temporarily disable data loader setup during __init__
+        # (will be set up after all components are initialized)
+        _train_ds_defer = cfg.get('train_ds', {}).get('defer_setup', False) if 'train_ds' in cfg else True
+        _val_ds_defer = cfg.get('validation_ds', {}).get('defer_setup', False) if 'validation_ds' in cfg else True
+        
+        with open_dict(cfg):
+            if 'train_ds' in cfg and cfg.train_ds is not None:
+                cfg.train_ds.defer_setup = True
+            if 'validation_ds' in cfg and cfg.validation_ds is not None:
+                cfg.validation_ds.defer_setup = True
         
         # Initialize ModelPT (handles optimizer setup, etc.)
         super().__init__(cfg=cfg, trainer=trainer)
@@ -94,10 +108,11 @@ class SimplifiedSSLModel(ModelPT):
         # Handle mask_position config adjustment BEFORE creating components
         if self._cfg.get("mask_position", "pre_conv") == "post_conv":
             # Adjust config for post-convolution masking
-            self._cfg.quantizer.feat_in = self._cfg.encoder.d_model
-            self._cfg.masking.feat_in = self._cfg.encoder.d_model
-            self._cfg.masking.block_size = self._cfg.masking.block_size // self._cfg.encoder.subsampling_factor
-            self._cfg.loss.combine_time_steps = 1
+            with open_dict(self._cfg):
+                self._cfg.quantizer.feat_in = self._cfg.encoder.d_model
+                self._cfg.masking.feat_in = self._cfg.encoder.d_model
+                self._cfg.masking.block_size = self._cfg.masking.block_size // self._cfg.encoder.subsampling_factor
+                self._cfg.loss.combine_time_steps = 1
         
         # Initialize components (same order as EncDecMaskedTokenPredModel)
         self.quantizer = self.from_config_dict(self._cfg.quantizer)
@@ -115,6 +130,17 @@ class SimplifiedSSLModel(ModelPT):
         # Initialize validation/test outputs lists
         self.validation_step_outputs = []
         self.test_step_outputs = []
+        
+        # Now set up data loaders (after all components are initialized)
+        with open_dict(self._cfg):
+            if 'train_ds' in self._cfg and self._cfg.train_ds is not None:
+                self._cfg.train_ds.defer_setup = _train_ds_defer
+                if not _train_ds_defer:
+                    self.setup_training_data(self._cfg.train_ds)
+            if 'validation_ds' in self._cfg and self._cfg.validation_ds is not None:
+                self._cfg.validation_ds.defer_setup = _val_ds_defer
+                if not _val_ds_defer:
+                    self.setup_validation_data(self._cfg.validation_ds)
     
     def _setup_dataloader_from_config(self, config: Optional[Dict]):
         """Set up dataloader from config (simplified version)."""
