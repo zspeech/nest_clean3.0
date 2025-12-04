@@ -150,15 +150,26 @@ def run_comparison(config_path=None, device='cpu'):
     print(f"   Only in original: {unmatched_src}")
     print(f"   Only in pure torch: {unmatched_dst}")
     
-    # Verify weights match
+    # Verify weights match (compare by name, not by position)
     print("\n5. Verifying weights match...")
+    orig_params = dict(original_model.named_parameters())
+    pure_params = dict(pure_torch_model.named_parameters())
+    
     all_match = True
-    for (name1, p1), (name2, p2) in zip(
-        original_model.named_parameters(), pure_torch_model.named_parameters()
-    ):
-        if not torch.equal(p1.data, p2.data):
-            print(f"   [FAIL] Weights differ: {name1}")
-            all_match = False
+    mismatch_count = 0
+    for name in orig_params.keys():
+        if name in pure_params:
+            if not torch.equal(orig_params[name].data, pure_params[name].data):
+                if mismatch_count < 5:  # Only print first 5 mismatches
+                    print(f"   [FAIL] Weights differ: {name}")
+                mismatch_count += 1
+                all_match = False
+        else:
+            print(f"   [WARN] Key not in pure torch: {name}")
+    
+    if mismatch_count > 5:
+        print(f"   ... and {mismatch_count - 5} more mismatches")
+    
     if all_match:
         print("   [PASS] All weights match exactly")
     
