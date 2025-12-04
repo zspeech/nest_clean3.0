@@ -317,10 +317,10 @@ def run_comparison(config_path=None, device='cpu'):
             input_signal=batch.noisy_audio, length=batch.noisy_audio_len
         )
         
-        # Apply mask
+        # Apply mask (use correct argument names: input_feats, input_lengths)
         set_seed(42)
         masked_signal_orig, masks_orig = original_model.mask_processor(
-            input_signal=orig_noisy_processed, length=orig_noisy_len
+            input_feats=orig_noisy_processed, input_lengths=orig_noisy_len
         )
         
         # Get tokens
