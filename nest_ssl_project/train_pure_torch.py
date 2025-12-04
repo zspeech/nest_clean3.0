@@ -24,21 +24,25 @@ from models.ssl_model_pure_torch import PureTorchSSLModel
 def create_optimizer_simple(model, cfg: dict, lr: float = None) -> torch.optim.Optimizer:
     """Create optimizer from plain dict config."""
     optim_cfg = cfg.get('optim', {})
-    optim_name = optim_cfg.get('name', 'adamw').lower()
+    optim_name = str(optim_cfg.get('name', 'adamw')).lower()
     if lr is None:
-        lr = optim_cfg.get('lr', 1e-4)
+        lr = float(optim_cfg.get('lr', 1e-4))
+    else:
+        lr = float(lr)
     betas = optim_cfg.get('betas', [0.9, 0.999])
-    weight_decay = optim_cfg.get('weight_decay', 0.0)
+    weight_decay = float(optim_cfg.get('weight_decay', 0.0))
     
-    if isinstance(betas, list):
-        betas = tuple(betas)
+    # Ensure betas are floats
+    if isinstance(betas, (list, tuple)):
+        betas = tuple(float(b) for b in betas)
     
     if optim_name == 'adamw':
         return torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
     elif optim_name == 'adam':
         return torch.optim.Adam(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
     elif optim_name == 'sgd':
-        return torch.optim.SGD(model.parameters(), lr=lr, momentum=optim_cfg.get('momentum', 0.9), weight_decay=weight_decay)
+        momentum = float(optim_cfg.get('momentum', 0.9))
+        return torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
     else:
         raise ValueError(f"Unknown optimizer: {optim_name}")
 
@@ -51,12 +55,12 @@ def create_scheduler_simple(optimizer, cfg: dict):
     if sched_cfg is None:
         return None
     
-    sched_name = sched_cfg.get('name', 'noam').lower()
+    sched_name = str(sched_cfg.get('name', 'noam')).lower()
     
     if sched_name in ('noamannealing', 'noam'):
-        d_model = sched_cfg.get('d_model', cfg.get('encoder', {}).get('d_model', 512))
-        warmup_steps = sched_cfg.get('warmup_steps', 10000)
-        min_lr = sched_cfg.get('min_lr', 1e-6)
+        d_model = int(sched_cfg.get('d_model', cfg.get('encoder', {}).get('d_model', 512)))
+        warmup_steps = int(sched_cfg.get('warmup_steps', 10000))
+        min_lr = float(sched_cfg.get('min_lr', 1e-6))
         
         def noam_lambda(step):
             step = max(step, 1)
@@ -67,8 +71,8 @@ def create_scheduler_simple(optimizer, cfg: dict):
         return torch.optim.lr_scheduler.LambdaLR(optimizer, noam_lambda)
     
     elif sched_name == 'cosine':
-        warmup_steps = sched_cfg.get('warmup_steps', 1000)
-        max_steps = cfg.get('trainer', {}).get('max_steps', 100000)
+        warmup_steps = int(sched_cfg.get('warmup_steps', 1000))
+        max_steps = int(cfg.get('trainer', {}).get('max_steps', 100000))
         
         def cosine_with_warmup(step):
             if step < warmup_steps:
