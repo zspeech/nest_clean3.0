@@ -191,12 +191,21 @@ def run_comparison(config_path=None, device='cpu'):
         orig_counts = get_module_params(original_model)
         pure_counts = get_module_params(pure_torch_model)
         
-        all_modules = set(orig_counts.keys()) | set(pure_counts.keys())
+        # Normalize module names for comparison (decoder_ssl -> decoder)
+        def normalize_mod(name):
+            if name == 'decoder_ssl':
+                return 'decoder'
+            return name
+        
+        normalized_orig_counts = {normalize_mod(k): v for k, v in orig_counts.items()}
+        
+        all_modules = set(normalized_orig_counts.keys()) | set(pure_counts.keys())
         for mod in sorted(all_modules):
-            orig_c = orig_counts.get(mod, 0)
+            orig_c = normalized_orig_counts.get(mod, 0)
             pure_c = pure_counts.get(mod, 0)
+            orig_name = 'decoder_ssl' if mod == 'decoder' and 'decoder_ssl' in orig_counts else mod
             if orig_c != pure_c:
-                print(f"   {mod}: original={orig_c:,} vs pure_torch={pure_c:,} (diff={orig_c-pure_c:,})")
+                print(f"   {orig_name} vs {mod}: original={orig_c:,} vs pure_torch={pure_c:,} (diff={orig_c-pure_c:,})")
         
         # Check for keys only in original
         orig_state = original_model.state_dict()
@@ -340,8 +349,9 @@ def run_comparison(config_path=None, device='cpu'):
             audio_signal=masked_signal, length=orig_noisy_len
         )
         
-        # Decode
-        orig_log_probs = original_model.decoder(encoder_output=orig_encoded)
+        # Decode (original model uses decoder_ssl, pure torch uses decoder)
+        orig_decoder = getattr(original_model, 'decoder_ssl', original_model.decoder)
+        orig_log_probs = orig_decoder(encoder_output=orig_encoded)
         pure_log_probs = pure_torch_model.decoder(encoder_output=pure_encoded)
         
         # Compute loss with fixed mask
@@ -396,7 +406,8 @@ def run_comparison(config_path=None, device='cpu'):
     orig_encoded_grad, orig_enc_len_grad = original_model.encoder(
         audio_signal=masked_signal_grad, length=orig_noisy_len
     )
-    orig_log_probs_grad = original_model.decoder(encoder_output=orig_encoded_grad)
+    orig_decoder = getattr(original_model, 'decoder_ssl', original_model.decoder)
+    orig_log_probs_grad = orig_decoder(encoder_output=orig_encoded_grad)
     orig_loss_grad = original_model.loss(
         masks=fixed_mask_grad, decoder_outputs=orig_log_probs_grad,
         targets=orig_tokens_grad, decoder_lengths=orig_enc_len_grad
