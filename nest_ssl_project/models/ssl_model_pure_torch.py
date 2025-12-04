@@ -239,9 +239,9 @@ class PureTorchSSLModel(nn.Module):
             stochastic_depth_start_layer=1,
         )
         
-        # Initialize decoder (named decoder_ssl to match original model)
+        # Initialize decoder
         print("Initializing decoder...")
-        self.decoder_ssl = MultiSoftmaxDecoder(
+        self.decoder = MultiSoftmaxDecoder(
             feat_in=d_model,
             num_classes=num_classes,
             num_decoders=num_books,
@@ -426,7 +426,7 @@ class PureTorchSSLModel(nn.Module):
             )
         
         # Decode
-        log_probs = self.decoder_ssl(encoder_output=encoded)
+        log_probs = self.decoder(encoder_output=encoded)
         
         return log_probs, encoded_len, masks, tokens
     
