@@ -15,7 +15,19 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Use absolute import to ensure we get nest_ssl_project's version
+import sys
+import os
+# Add nest_ssl_project to path to ensure correct imports
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(script_dir)
+if project_dir not in sys.path:
+    sys.path.insert(0, project_dir)
+
 from models.ssl_models import EncDecDenoiseMaskedTokenPredModel
+
+# Debug: print which module we're using
+print(f"Using EncDecDenoiseMaskedTokenPredModel from: {EncDecDenoiseMaskedTokenPredModel.__module__}")
 from models.ssl_model_pure_torch import PureTorchSSLModel
 from data.ssl_dataset import AudioNoiseBatch
 from utils.logging import get_logger
