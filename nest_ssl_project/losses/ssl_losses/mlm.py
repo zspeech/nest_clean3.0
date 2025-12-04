@@ -72,6 +72,12 @@ class MLMLoss(Loss):
         masks = masks.reshape(masks.shape[0], masks.shape[1] // self.combine_time_steps, -1)
         masks = masks.mean(-1) > self.mask_threshold
 
+        # Check if there are any masked positions - return 0 loss if none
+        num_masked = masks.sum().item()
+        if num_masked == 0:
+            # No masked positions - return zero loss to avoid NaN
+            return torch.tensor(0.0, device=decoder_outputs.device, requires_grad=True)
+
         out_masked_only = decoder_outputs[masks]
         targets = F.pad(targets, (0, masks.shape[-1] - targets.shape[-1]))
         targets_masked_only = targets[masks]
