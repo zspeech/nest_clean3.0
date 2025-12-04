@@ -32,53 +32,43 @@ def set_seed(seed: int = 42):
 
 
 def copy_weights(src_model, dst_model):
-    """Copy weights from source to destination."""
+    """Copy weights from source to destination using direct load_state_dict."""
     src_state = src_model.state_dict()
     dst_state = dst_model.state_dict()
     
-    matched = 0
-    unmatched_src = []
-    unmatched_dst = []
+    # Check key compatibility first
+    src_keys = set(src_state.keys())
+    dst_keys = set(dst_state.keys())
+    
+    only_in_src = src_keys - dst_keys
+    only_in_dst = dst_keys - src_keys
+    common_keys = src_keys & dst_keys
+    
     shape_mismatch = []
-    
-    # Check source keys
-    for key in src_state.keys():
-        if key in dst_state:
-            if src_state[key].shape == dst_state[key].shape:
-                dst_state[key] = src_state[key].clone()
-                matched += 1
-            else:
-                shape_mismatch.append(f"{key}: src={list(src_state[key].shape)} dst={list(dst_state[key].shape)}")
-        else:
-            unmatched_src.append(key)
-    
-    # Check dst keys not in src
-    for key in dst_state.keys():
-        if key not in src_state:
-            unmatched_dst.append(key)
+    for key in common_keys:
+        if src_state[key].shape != dst_state[key].shape:
+            shape_mismatch.append(f"{key}: src={list(src_state[key].shape)} dst={list(dst_state[key].shape)}")
     
     # Print detailed info
-    if unmatched_src:
-        print(f"   Keys in original but NOT in pure torch ({len(unmatched_src)}):")
-        for k in unmatched_src[:10]:
+    if only_in_src:
+        print(f"   Keys only in original ({len(only_in_src)}):")
+        for k in list(only_in_src)[:10]:
             print(f"      {k}")
-        if len(unmatched_src) > 10:
-            print(f"      ... and {len(unmatched_src) - 10} more")
     
-    if unmatched_dst:
-        print(f"   Keys in pure torch but NOT in original ({len(unmatched_dst)}):")
-        for k in unmatched_dst[:10]:
+    if only_in_dst:
+        print(f"   Keys only in pure torch ({len(only_in_dst)}):")
+        for k in list(only_in_dst)[:10]:
             print(f"      {k}")
-        if len(unmatched_dst) > 10:
-            print(f"      ... and {len(unmatched_dst) - 10} more")
     
     if shape_mismatch:
         print(f"   Shape mismatches ({len(shape_mismatch)}):")
         for k in shape_mismatch[:10]:
             print(f"      {k}")
     
-    dst_model.load_state_dict(dst_state, strict=False)
-    return matched, len(unmatched_src), len(unmatched_dst)
+    # Directly load state dict
+    dst_model.load_state_dict(src_state, strict=True)
+    
+    return len(common_keys) - len(shape_mismatch), len(only_in_src), len(only_in_dst)
 
 
 def compare_tensors(name, t1, t2, rtol=1e-4, atol=1e-5):
