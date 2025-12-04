@@ -109,10 +109,10 @@ def run_comparison(config_path=None, device='cpu'):
     original_model.eval()
     print(f"   Parameters: {sum(p.numel() for p in original_model.parameters()):,}")
     
-    # Create pure torch model
+    # Create pure torch model from config file
     print("\n3. Creating pure torch model (PureTorchSSLModel)...")
     set_seed(42)
-    pure_torch_model = PureTorchSSLModel(cfg.model)
+    pure_torch_model = PureTorchSSLModel.from_config_file(config_path)
     pure_torch_model.to(device)
     pure_torch_model.eval()
     print(f"   Parameters: {sum(p.numel() for p in pure_torch_model.parameters()):,}")
