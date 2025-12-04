@@ -175,28 +175,85 @@ def run_comparison(config_path=None, device='cpu'):
     print(f"   Only in original: {unmatched_src}")
     print(f"   Only in pure torch: {unmatched_dst}")
     
-    # Verify weights match (compare by name, not by position)
+    # Check parameter counts per module
+    if sum(p.numel() for p in original_model.parameters()) != sum(p.numel() for p in pure_torch_model.parameters()):
+        print("\n   [WARN] Parameter count mismatch! Comparing by module:")
+        
+        def get_module_params(model, prefix=''):
+            """Get parameter count per top-level module."""
+            counts = {}
+            for name, module in model.named_children():
+                full_name = f"{prefix}{name}"
+                count = sum(p.numel() for p in module.parameters())
+                counts[full_name] = count
+            return counts
+        
+        orig_counts = get_module_params(original_model)
+        pure_counts = get_module_params(pure_torch_model)
+        
+        all_modules = set(orig_counts.keys()) | set(pure_counts.keys())
+        for mod in sorted(all_modules):
+            orig_c = orig_counts.get(mod, 0)
+            pure_c = pure_counts.get(mod, 0)
+            if orig_c != pure_c:
+                print(f"   {mod}: original={orig_c:,} vs pure_torch={pure_c:,} (diff={orig_c-pure_c:,})")
+        
+        # Check for keys only in original
+        orig_state = original_model.state_dict()
+        pure_state = pure_torch_model.state_dict()
+        
+        # Normalize keys
+        def normalize_key(key):
+            if key.startswith('decoder_ssl.'):
+                return key.replace('decoder_ssl.', 'decoder.', 1)
+            return key
+        
+        normalized_pure_keys = {normalize_key(k): k for k in pure_state.keys()}
+        
+        only_in_orig = []
+        for k in orig_state.keys():
+            norm_k = normalize_key(k)
+            if norm_k not in normalized_pure_keys and k not in pure_state:
+                only_in_orig.append(k)
+        
+        if only_in_orig:
+            print(f"\n   Keys only in original ({len(only_in_orig)}):")
+            for k in only_in_orig[:10]:
+                print(f"      {k}: shape={list(orig_state[k].shape)}, params={orig_state[k].numel():,}")
+    
+    # Verify weights match (compare by name with normalization)
     print("\n5. Verifying weights match...")
     orig_params = dict(original_model.named_parameters())
     pure_params = dict(pure_torch_model.named_parameters())
     
+    def normalize_key(key):
+        if key.startswith('decoder_ssl.'):
+            return key.replace('decoder_ssl.', 'decoder.', 1)
+        return key
+    
     all_match = True
     mismatch_count = 0
     for name in orig_params.keys():
-        if name in pure_params:
-            if not torch.equal(orig_params[name].data, pure_params[name].data):
-                if mismatch_count < 5:  # Only print first 5 mismatches
+        norm_name = normalize_key(name)
+        if norm_name in pure_params:
+            if not torch.equal(orig_params[name].data, pure_params[norm_name].data):
+                if mismatch_count < 5:
                     print(f"   [FAIL] Weights differ: {name}")
                 mismatch_count += 1
                 all_match = False
-        else:
-            print(f"   [WARN] Key not in pure torch: {name}")
+        elif name in pure_params:
+            if not torch.equal(orig_params[name].data, pure_params[name].data):
+                if mismatch_count < 5:
+                    print(f"   [FAIL] Weights differ: {name}")
+                mismatch_count += 1
+                all_match = False
+        # Skip keys that don't exist in pure (already reported above)
     
     if mismatch_count > 5:
         print(f"   ... and {mismatch_count - 5} more mismatches")
     
-    if all_match:
-        print("   [PASS] All weights match exactly")
+    if all_match and mismatch_count == 0:
+        print("   [PASS] All common weights match exactly")
     
     # Create test batch (10 seconds to ensure masked positions)
     print("\n6. Creating test batch...")
