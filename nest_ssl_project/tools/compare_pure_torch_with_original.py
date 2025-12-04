@@ -259,8 +259,8 @@ def run_comparison(config_path=None, device='cpu'):
         )
         
         # Decode
-        orig_log_probs = original_model.decoder(encoder_output=orig_encoded)
-        pure_log_probs = pure_torch_model.decoder(encoder_output=pure_encoded)
+        orig_log_probs = original_model.decoder_ssl(encoder_output=orig_encoded)
+        pure_log_probs = pure_torch_model.decoder_ssl(encoder_output=pure_encoded)
         
         # Compute loss with fixed mask
         orig_loss = original_model.loss(
