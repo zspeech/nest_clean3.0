@@ -13,19 +13,27 @@
 # limitations under the License.
 
 """
-Loss base class to replace nemo.core.classes.loss.Loss
+Loss base class - simplified for standalone use.
 """
 
 import torch
-
-from core.classes.common import Typing
-from core.classes.serialization import Serialization
+from typing import Optional, Dict, Any
 
 __all__ = ['Loss']
 
 
-class Loss(torch.nn.modules.loss._Loss, Typing, Serialization):
-    """Inherit this class to implement custom loss."""
+class Loss(torch.nn.modules.loss._Loss):
+    """Base class for loss functions."""
+    
+    @property
+    def input_types(self) -> Optional[Dict[str, Any]]:
+        """Returns definitions of module input ports."""
+        return None
+    
+    @property
+    def output_types(self) -> Optional[Dict[str, Any]]:
+        """Returns definitions of module output ports."""
+        return None
     
     def __init__(self, **kwargs):
         super(Loss, self).__init__(**kwargs)

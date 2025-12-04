@@ -51,13 +51,4 @@ class NeuralModule(nn.Module, ABC):
         for param in self.parameters():
             param.requires_grad = True
     
-    @classmethod
-    def from_config_dict(cls, config: Dict[str, Any]):
-        """
-        Instantiate a module from a configuration dictionary.
-        Supports Hydra-style instantiation with _target_ key.
-        Uses Serialization.from_config_dict for remapping NeMo targets.
-        """
-        from core.classes.serialization import Serialization
-        return Serialization.from_config_dict(config)
 
