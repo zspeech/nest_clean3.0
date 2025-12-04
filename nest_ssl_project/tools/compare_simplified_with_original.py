@@ -186,10 +186,25 @@ def run_comparison(config_path: str = None, output_dir: str = None, device: str 
         if 'validation_ds' in cfg.model:
             cfg.model.validation_ds.defer_setup = True
     
+    # Create a minimal mock trainer to avoid "not attached to trainer" errors
+    class MockTrainer:
+        def __init__(self):
+            self.world_size = 1
+            self.global_rank = 0
+            self.local_rank = 0
+            self.num_devices = 1
+            self.num_nodes = 1
+            self.val_dataloaders = None
+            self.test_dataloaders = None
+            self.global_step = 0
+    
+    mock_trainer = MockTrainer()
+    
     # Create models
     print("\n2. Creating original model...")
     set_seed(42)
     original_model = EncDecDenoiseMaskedTokenPredModel(cfg=cfg.model, trainer=None)
+    original_model._trainer = mock_trainer  # Attach mock trainer
     original_model.to(device)
     original_model.eval()
     print(f"   Original model params: {sum(p.numel() for p in original_model.parameters()):,}")
@@ -197,6 +212,7 @@ def run_comparison(config_path: str = None, output_dir: str = None, device: str 
     print("\n3. Creating simplified model...")
     set_seed(42)
     simplified_model = SimplifiedSSLModel(cfg=cfg.model, trainer=None)
+    simplified_model._trainer = mock_trainer  # Attach mock trainer
     simplified_model.to(device)
     simplified_model.eval()
     print(f"   Simplified model params: {sum(p.numel() for p in simplified_model.parameters()):,}")
