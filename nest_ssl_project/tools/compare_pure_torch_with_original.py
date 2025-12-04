@@ -304,6 +304,117 @@ def run_comparison(config_path=None, device='cpu'):
     results.append(r)
     pass_flags.append(p)
     
+    # 10. Compare backward gradients
+    print("\n10. Comparing backward gradients...")
+    
+    # Create fresh batch for gradient comparison
+    batch2 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
+    
+    # Zero gradients
+    original_model.zero_grad()
+    pure_torch_model.zero_grad()
+    
+    # Enable training mode
+    original_model.train()
+    pure_torch_model.train()
+    
+    # Forward pass with gradients - Original model
+    set_seed(42)
+    orig_processed, orig_len = original_model.preprocessor(
+        input_signal=batch2.audio, length=batch2.audio_len
+    )
+    orig_noisy_processed, orig_noisy_len = original_model.preprocessor(
+        input_signal=batch2.noisy_audio, length=batch2.noisy_audio_len
+    )
+    
+    # Create fixed mask for gradient comparison
+    fixed_mask_grad = torch.zeros_like(orig_noisy_processed)
+    fixed_mask_grad[:, :, 10:50] = 1.0
+    
+    # Get tokens
+    _, orig_tokens_grad = original_model.quantizer(input_signal=orig_processed)
+    
+    # Apply mask and encode
+    masked_signal_grad = orig_noisy_processed * (1 - fixed_mask_grad)
+    orig_encoded_grad, orig_enc_len_grad = original_model.encoder(
+        audio_signal=masked_signal_grad, length=orig_noisy_len
+    )
+    orig_log_probs_grad = original_model.decoder(encoder_output=orig_encoded_grad)
+    orig_loss_grad = original_model.loss(
+        masks=fixed_mask_grad, decoder_outputs=orig_log_probs_grad,
+        targets=orig_tokens_grad, decoder_lengths=orig_enc_len_grad
+    )
+    
+    # Backward - Original
+    orig_loss_grad.backward()
+    
+    # Forward pass with gradients - Pure torch model
+    set_seed(42)
+    pure_processed, pure_len = pure_torch_model.preprocessor(
+        input_signal=batch2.audio, length=batch2.audio_len
+    )
+    pure_noisy_processed, pure_noisy_len = pure_torch_model.preprocessor(
+        input_signal=batch2.noisy_audio, length=batch2.noisy_audio_len
+    )
+    
+    # Get tokens
+    _, pure_tokens_grad = pure_torch_model.quantizer(input_signal=pure_processed)
+    
+    # Apply same mask and encode
+    pure_masked_signal_grad = pure_noisy_processed * (1 - fixed_mask_grad)
+    pure_encoded_grad, pure_enc_len_grad = pure_torch_model.encoder(
+        audio_signal=pure_masked_signal_grad, length=pure_noisy_len
+    )
+    pure_log_probs_grad = pure_torch_model.decoder(encoder_output=pure_encoded_grad)
+    pure_loss_grad = pure_torch_model.loss(
+        masks=fixed_mask_grad, decoder_outputs=pure_log_probs_grad,
+        targets=pure_tokens_grad, decoder_lengths=pure_enc_len_grad
+    )
+    
+    # Backward - Pure torch
+    pure_loss_grad.backward()
+    
+    # Compare gradients
+    print("   Comparing parameter gradients...")
+    orig_params = dict(original_model.named_parameters())
+    pure_params = dict(pure_torch_model.named_parameters())
+    
+    # Normalize key names for comparison
+    def normalize_key(key):
+        if key.startswith('decoder_ssl.'):
+            return key.replace('decoder_ssl.', 'decoder.', 1)
+        return key
+    
+    grad_mismatch = 0
+    grad_match = 0
+    max_grad_diff = 0.0
+    max_grad_diff_name = ""
+    
+    for orig_name, orig_param in orig_params.items():
+        pure_name = normalize_key(orig_name)
+        if pure_name in pure_params:
+            pure_param = pure_params[pure_name]
+            if orig_param.grad is not None and pure_param.grad is not None:
+                diff = (orig_param.grad - pure_param.grad).abs().max().item()
+                if diff > max_grad_diff:
+                    max_grad_diff = diff
+                    max_grad_diff_name = orig_name
+                if diff > 1e-4:
+                    grad_mismatch += 1
+                    if grad_mismatch <= 3:
+                        print(f"   [FAIL] Gradient mismatch: {orig_name}, max_diff={diff:.2e}")
+                else:
+                    grad_match += 1
+            elif orig_param.grad is None and pure_param.grad is None:
+                grad_match += 1  # Both None is OK (frozen params)
+    
+    print(f"   Gradients matched: {grad_match}, mismatched: {grad_mismatch}")
+    print(f"   Max gradient diff: {max_grad_diff:.2e} at {max_grad_diff_name}")
+    
+    grad_pass = grad_mismatch == 0 or max_grad_diff < 1e-3
+    results.append(f"[{'PASS' if grad_pass else 'FAIL'}] gradients: matched={grad_match}, mismatched={grad_mismatch}, max_diff={max_grad_diff:.2e}")
+    pass_flags.append(grad_pass)
+    
     # Print results
     print("\n" + "=" * 80)
     print("COMPARISON RESULTS")
