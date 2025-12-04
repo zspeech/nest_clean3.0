@@ -7,7 +7,7 @@ This script runs both models with the same input and compares all intermediate o
 import torch
 import numpy as np
 from pathlib import Path
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 import pickle
 import sys
 import os
@@ -180,7 +180,7 @@ def run_comparison(config_path: str = None, output_dir: str = None, device: str 
     cfg = OmegaConf.load(config_path)
     
     # Disable data loader setup for faster initialization
-    with OmegaConf.open_dict(cfg):
+    with open_dict(cfg):
         if 'train_ds' in cfg.model:
             cfg.model.train_ds.defer_setup = True
         if 'validation_ds' in cfg.model:
