@@ -176,17 +176,68 @@ def run_comparison(config_path=None, device='cpu'):
     results.append(compare_tensors("masks", masks_orig.cpu(), masks_pure.cpu()))
     results.append(compare_tensors("tokens", tokens_orig.cpu().float(), tokens_pure.cpu().float()))
     
-    # Compare training step
+    # Compare training step - need to create fresh batch and set seed for each
     print("\n9. Comparing training step...")
+    
+    # Create fresh batch for original model
+    batch1 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
     set_seed(42)
     original_model.train()
-    orig_train = original_model.training_step(batch, batch_idx=0)
+    orig_train = original_model.training_step(batch1, batch_idx=0)
     
+    # Create fresh batch for pure torch model (same seed produces same batch)
+    batch2 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
     set_seed(42)
     pure_torch_model.train()
-    pure_train_loss = pure_torch_model.training_step(batch)
+    pure_train_loss = pure_torch_model.training_step(batch2)
     
     results.append(compare_tensors("training_loss", orig_train['loss'].cpu(), pure_train_loss.cpu()))
+    
+    # If training loss doesn't match, do detailed comparison
+    if not torch.allclose(orig_train['loss'].cpu(), pure_train_loss.cpu(), rtol=1e-4, atol=1e-5):
+        print("\n   Training loss mismatch - detailed comparison:")
+        print(f"   Original loss: {orig_train['loss'].item():.6f}")
+        print(f"   Pure torch loss: {pure_train_loss.item():.6f}")
+        print(f"   Difference: {abs(orig_train['loss'].item() - pure_train_loss.item()):.2e}")
+        
+        # Run forward to get intermediate outputs
+        set_seed(42)
+        original_model.eval()
+        with torch.no_grad():
+            batch3 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+            set_seed(42)
+            orig_log_probs, orig_enc_len, orig_masks, orig_tokens = original_model.forward(
+                input_signal=batch3.audio,
+                input_signal_length=batch3.audio_len,
+                noise_signal=batch3.noise,
+                noise_signal_length=batch3.noise_len,
+                noisy_input_signal=batch3.noisy_audio,
+                noisy_input_signal_length=batch3.noisy_audio_len,
+                apply_mask=True,
+            )
+        
+        set_seed(42)
+        pure_torch_model.eval()
+        with torch.no_grad():
+            batch4 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
+            set_seed(42)
+            pure_log_probs, pure_enc_len, pure_masks, pure_tokens = pure_torch_model.forward(
+                input_signal=batch4.audio,
+                input_signal_length=batch4.audio_len,
+                noisy_input_signal=batch4.noisy_audio,
+                noisy_input_signal_length=batch4.noisy_audio_len,
+                apply_mask=True,
+            )
+        
+        print(f"\n   Masks comparison (with fresh seed):")
+        print(f"   Original masks sum: {orig_masks.sum().item():.2f}")
+        print(f"   Pure torch masks sum: {pure_masks.sum().item():.2f}")
+        print(f"   Masks max diff: {(orig_masks - pure_masks).abs().max().item():.2e}")
+        
+        print(f"\n   Log probs comparison:")
+        print(f"   Original mean: {orig_log_probs.mean().item():.6f}")
+        print(f"   Pure torch mean: {pure_log_probs.mean().item():.6f}")
+        print(f"   Max diff: {(orig_log_probs - pure_log_probs).abs().max().item():.2e}")
     
     # Print results
     print("\n" + "=" * 80)
