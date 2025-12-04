@@ -220,78 +220,64 @@ def run_comparison(config_path=None, device='cpu'):
     r, p = compare_tensors("tokens", tokens_orig.cpu().float(), tokens_pure.cpu().float())
     results.append(r); pass_flags.append(p)
     
-    # Compare training step - need to create fresh batch and set seed for each
-    print("\n9. Comparing training step...")
+    # Compare training step with FIXED masks (no randomness)
+    print("\n9. Comparing training step with fixed masks...")
     
-    # Create fresh batch for original model
+    # Create batch
     batch1 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
-    set_seed(42)
-    original_model.train()
-    orig_train = original_model.training_step(batch1, batch_idx=0)
     
-    # Create fresh batch for pure torch model (same seed produces same batch)
-    batch2 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
-    set_seed(42)
-    pure_torch_model.train()
-    pure_train_loss = pure_torch_model.training_step(batch2)
+    # First, run forward WITHOUT masking to get outputs
+    original_model.eval()
+    pure_torch_model.eval()
     
-    # Training loss uses larger tolerance because masks are randomly generated
-    r, p = compare_tensors("training_loss", orig_train['loss'].cpu(), pure_train_loss.cpu(), rtol=0.1, atol=0.1)
+    with torch.no_grad():
+        # Get preprocessed features
+        orig_processed, orig_len = original_model.preprocessor(
+            input_signal=batch1.audio, length=batch1.audio_len
+        )
+        orig_noisy_processed, orig_noisy_len = original_model.preprocessor(
+            input_signal=batch1.noisy_audio, length=batch1.noisy_audio_len
+        )
+        
+        # Create FIXED mask (mask frames 10-50 for each sample)
+        fixed_mask = torch.zeros_like(orig_noisy_processed)
+        fixed_mask[:, :, 10:50] = 1.0  # Mask frames 10-50
+        
+        # Get tokens from clean signal
+        _, orig_tokens = original_model.quantizer(input_signal=orig_processed)
+        _, pure_tokens = pure_torch_model.quantizer(input_signal=orig_processed)
+        
+        # Apply fixed mask manually
+        masked_signal = orig_noisy_processed * (1 - fixed_mask)
+        
+        # Encode
+        orig_encoded, orig_enc_len = original_model.encoder(
+            audio_signal=masked_signal, length=orig_noisy_len
+        )
+        pure_encoded, pure_enc_len = pure_torch_model.encoder(
+            audio_signal=masked_signal, length=orig_noisy_len
+        )
+        
+        # Decode
+        orig_log_probs = original_model.decoder(encoder_output=orig_encoded)
+        pure_log_probs = pure_torch_model.decoder(encoder_output=pure_encoded)
+        
+        # Compute loss with fixed mask
+        orig_loss = original_model.loss(
+            masks=fixed_mask, decoder_outputs=orig_log_probs, 
+            targets=orig_tokens, decoder_lengths=orig_enc_len
+        )
+        pure_loss = pure_torch_model.loss(
+            masks=fixed_mask, decoder_outputs=pure_log_probs,
+            targets=pure_tokens, decoder_lengths=pure_enc_len
+        )
+    
+    print(f"   Original loss (fixed mask): {orig_loss.item():.6f}")
+    print(f"   Pure torch loss (fixed mask): {pure_loss.item():.6f}")
+    
+    r, p = compare_tensors("training_loss_fixed_mask", orig_loss.cpu(), pure_loss.cpu())
     results.append(r)
-    # Consider training_loss as pass if difference < 1% (due to random mask generation)
-    loss_diff = abs(orig_train['loss'].item() - pure_train_loss.item())
-    loss_pass = loss_diff < 0.1 or (loss_diff / abs(orig_train['loss'].item()) < 0.01)
-    pass_flags.append(loss_pass)
-    if not loss_pass:
-        results[-1] = results[-1].replace("[FAIL]", "[FAIL]").replace("[PASS]", "[PASS]")
-    else:
-        results[-1] = f"[PASS] training_loss: diff={loss_diff:.2e} (<1% due to random masks), shape=[]"
-    
-    # If training loss doesn't match, do detailed comparison
-    if not torch.allclose(orig_train['loss'].cpu(), pure_train_loss.cpu(), rtol=1e-4, atol=1e-5):
-        print("\n   Training loss mismatch - detailed comparison:")
-        print(f"   Original loss: {orig_train['loss'].item():.6f}")
-        print(f"   Pure torch loss: {pure_train_loss.item():.6f}")
-        print(f"   Difference: {abs(orig_train['loss'].item() - pure_train_loss.item()):.2e}")
-        
-        # Run forward to get intermediate outputs
-        set_seed(42)
-        original_model.eval()
-        with torch.no_grad():
-            batch3 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
-            set_seed(42)
-            orig_log_probs, orig_enc_len, orig_masks, orig_tokens = original_model.forward(
-                input_signal=batch3.audio,
-                input_signal_length=batch3.audio_len,
-                noise_signal=batch3.noise,
-                noise_signal_length=batch3.noise_len,
-                noisy_input_signal=batch3.noisy_audio,
-                noisy_input_signal_length=batch3.noisy_audio_len,
-                apply_mask=True,
-            )
-        
-        set_seed(42)
-        pure_torch_model.eval()
-        with torch.no_grad():
-            batch4 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
-            set_seed(42)
-            pure_log_probs, pure_enc_len, pure_masks, pure_tokens = pure_torch_model.forward(
-                input_signal=batch4.audio,
-                input_signal_length=batch4.audio_len,
-                noisy_input_signal=batch4.noisy_audio,
-                noisy_input_signal_length=batch4.noisy_audio_len,
-                apply_mask=True,
-            )
-        
-        print(f"\n   Masks comparison (with fresh seed):")
-        print(f"   Original masks sum: {orig_masks.sum().item():.2f}")
-        print(f"   Pure torch masks sum: {pure_masks.sum().item():.2f}")
-        print(f"   Masks max diff: {(orig_masks - pure_masks).abs().max().item():.2e}")
-        
-        print(f"\n   Log probs comparison:")
-        print(f"   Original mean: {orig_log_probs.mean().item():.6f}")
-        print(f"   Pure torch mean: {pure_log_probs.mean().item():.6f}")
-        print(f"   Max diff: {(orig_log_probs - pure_log_probs).abs().max().item():.2e}")
+    pass_flags.append(p)
     
     # Print results
     print("\n" + "=" * 80)
