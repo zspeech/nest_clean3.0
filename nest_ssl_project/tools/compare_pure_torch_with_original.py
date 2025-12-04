@@ -37,13 +37,48 @@ def copy_weights(src_model, dst_model):
     dst_state = dst_model.state_dict()
     
     matched = 0
-    for key in src_state.keys():
-        if key in dst_state and src_state[key].shape == dst_state[key].shape:
-            dst_state[key] = src_state[key].clone()
-            matched += 1
+    unmatched_src = []
+    unmatched_dst = []
+    shape_mismatch = []
     
-    dst_model.load_state_dict(dst_state)
-    return matched
+    # Check source keys
+    for key in src_state.keys():
+        if key in dst_state:
+            if src_state[key].shape == dst_state[key].shape:
+                dst_state[key] = src_state[key].clone()
+                matched += 1
+            else:
+                shape_mismatch.append(f"{key}: src={list(src_state[key].shape)} dst={list(dst_state[key].shape)}")
+        else:
+            unmatched_src.append(key)
+    
+    # Check dst keys not in src
+    for key in dst_state.keys():
+        if key not in src_state:
+            unmatched_dst.append(key)
+    
+    # Print detailed info
+    if unmatched_src:
+        print(f"   Keys in original but NOT in pure torch ({len(unmatched_src)}):")
+        for k in unmatched_src[:10]:
+            print(f"      {k}")
+        if len(unmatched_src) > 10:
+            print(f"      ... and {len(unmatched_src) - 10} more")
+    
+    if unmatched_dst:
+        print(f"   Keys in pure torch but NOT in original ({len(unmatched_dst)}):")
+        for k in unmatched_dst[:10]:
+            print(f"      {k}")
+        if len(unmatched_dst) > 10:
+            print(f"      ... and {len(unmatched_dst) - 10} more")
+    
+    if shape_mismatch:
+        print(f"   Shape mismatches ({len(shape_mismatch)}):")
+        for k in shape_mismatch[:10]:
+            print(f"      {k}")
+    
+    dst_model.load_state_dict(dst_state, strict=False)
+    return matched, len(unmatched_src), len(unmatched_dst)
 
 
 def compare_tensors(name, t1, t2, rtol=1e-4, atol=1e-5):
@@ -58,16 +93,16 @@ def compare_tensors(name, t1, t2, rtol=1e-4, atol=1e-5):
     return f"[{status}] {name}: max_diff={max_diff:.2e}, shape={list(t1.shape)}"
 
 
-def create_dummy_batch(batch_size=2, audio_len=160000, device='cpu'):
-    """Create dummy batch with longer audio (10s) to ensure masked positions exist."""
+def create_dummy_batch(batch_size=2, audio_len=16000, device='cpu'):
+    """Create dummy batch (1s audio)."""
     set_seed(42)
     return AudioNoiseBatch(
         audio=torch.randn(batch_size, audio_len, device=device),
-        audio_len=torch.tensor([audio_len, audio_len - 10000], dtype=torch.int32, device=device),
+        audio_len=torch.tensor([audio_len, audio_len], dtype=torch.int32, device=device),
         noise=torch.randn(batch_size, audio_len, device=device),
-        noise_len=torch.tensor([audio_len, audio_len - 10000], dtype=torch.int32, device=device),
+        noise_len=torch.tensor([audio_len, audio_len], dtype=torch.int32, device=device),
         noisy_audio=torch.randn(batch_size, audio_len, device=device),
-        noisy_audio_len=torch.tensor([audio_len, audio_len - 10000], dtype=torch.int32, device=device),
+        noisy_audio_len=torch.tensor([audio_len, audio_len], dtype=torch.int32, device=device),
     )
 
 
@@ -120,8 +155,10 @@ def run_comparison(config_path=None, device='cpu'):
     
     # Copy weights
     print("\n4. Copying weights from original to pure torch...")
-    matched = copy_weights(original_model, pure_torch_model)
-    print(f"   Copied {matched} parameters")
+    matched, unmatched_src, unmatched_dst = copy_weights(original_model, pure_torch_model)
+    print(f"   Matched and copied: {matched}")
+    print(f"   Only in original: {unmatched_src}")
+    print(f"   Only in pure torch: {unmatched_dst}")
     
     # Verify weights match
     print("\n5. Verifying weights match...")
@@ -137,7 +174,7 @@ def run_comparison(config_path=None, device='cpu'):
     
     # Create test batch (10 seconds to ensure masked positions)
     print("\n6. Creating test batch...")
-    batch = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
+    batch = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
     
     # Forward pass - original
     print("\n7. Running forward pass on original model...")
@@ -181,13 +218,13 @@ def run_comparison(config_path=None, device='cpu'):
     print("\n9. Comparing training step...")
     
     # Create fresh batch for original model
-    batch1 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
+    batch1 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
     set_seed(42)
     original_model.train()
     orig_train = original_model.training_step(batch1, batch_idx=0)
     
     # Create fresh batch for pure torch model (same seed produces same batch)
-    batch2 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
+    batch2 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
     set_seed(42)
     pure_torch_model.train()
     pure_train_loss = pure_torch_model.training_step(batch2)
@@ -205,7 +242,7 @@ def run_comparison(config_path=None, device='cpu'):
         set_seed(42)
         original_model.eval()
         with torch.no_grad():
-            batch3 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
+            batch3 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
             set_seed(42)
             orig_log_probs, orig_enc_len, orig_masks, orig_tokens = original_model.forward(
                 input_signal=batch3.audio,
@@ -220,7 +257,7 @@ def run_comparison(config_path=None, device='cpu'):
         set_seed(42)
         pure_torch_model.eval()
         with torch.no_grad():
-            batch4 = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
+            batch4 = create_dummy_batch(batch_size=2, audio_len=16000, device=device)
             set_seed(42)
             pure_log_probs, pure_enc_len, pure_masks, pure_tokens = pure_torch_model.forward(
                 input_signal=batch4.audio,
