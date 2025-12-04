@@ -32,12 +32,31 @@ def set_seed(seed: int = 42):
 
 
 def copy_weights(src_model, dst_model):
-    """Copy weights from source to destination using direct load_state_dict."""
+    """Copy weights from source to destination with automatic key renaming."""
     src_state = src_model.state_dict()
     dst_state = dst_model.state_dict()
     
-    # Check key compatibility first
-    src_keys = set(src_state.keys())
+    # Create a mapping for key renaming (handles decoder vs decoder_ssl)
+    def normalize_key(key):
+        """Normalize key names - map decoder_ssl to decoder."""
+        if key.startswith('decoder_ssl.'):
+            return key.replace('decoder_ssl.', 'decoder.', 1)
+        return key
+    
+    # Build remapped source state dict
+    remapped_src_state = {}
+    key_mapping = {}  # original_key -> new_key
+    
+    for key, value in src_state.items():
+        new_key = normalize_key(key)
+        if new_key in dst_state:
+            remapped_src_state[new_key] = value
+            if key != new_key:
+                key_mapping[key] = new_key
+        else:
+            remapped_src_state[key] = value  # Keep original if no match
+    
+    src_keys = set(remapped_src_state.keys())
     dst_keys = set(dst_state.keys())
     
     only_in_src = src_keys - dst_keys
@@ -46,10 +65,15 @@ def copy_weights(src_model, dst_model):
     
     shape_mismatch = []
     for key in common_keys:
-        if src_state[key].shape != dst_state[key].shape:
-            shape_mismatch.append(f"{key}: src={list(src_state[key].shape)} dst={list(dst_state[key].shape)}")
+        if remapped_src_state[key].shape != dst_state[key].shape:
+            shape_mismatch.append(f"{key}: src={list(remapped_src_state[key].shape)} dst={list(dst_state[key].shape)}")
     
-    # Print detailed info
+    # Print info
+    if key_mapping:
+        print(f"   Keys remapped ({len(key_mapping)}):")
+        for orig, new in list(key_mapping.items())[:5]:
+            print(f"      {orig} -> {new}")
+    
     if only_in_src:
         print(f"   Keys only in original ({len(only_in_src)}):")
         for k in list(only_in_src)[:10]:
@@ -65,8 +89,9 @@ def copy_weights(src_model, dst_model):
         for k in shape_mismatch[:10]:
             print(f"      {k}")
     
-    # Directly load state dict
-    dst_model.load_state_dict(src_state, strict=True)
+    # Load remapped state dict
+    dst_model.load_state_dict(remapped_src_state, strict=True)
+    print(f"   Successfully loaded {len(common_keys)} keys")
     
     return len(common_keys) - len(shape_mismatch), len(only_in_src), len(only_in_dst)
 
