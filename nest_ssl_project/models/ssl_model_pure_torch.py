@@ -25,6 +25,7 @@ This is a standalone implementation that:
 from typing import Optional, Tuple
 import torch
 import torch.nn as nn
+import numpy as np
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 import sys
@@ -549,3 +550,100 @@ class PureTorchSSLModel(nn.Module):
             'epoch': checkpoint.get('epoch', 0),
             'step': checkpoint.get('step', 0),
         }
+
+
+def create_optimizer(model: nn.Module, cfg: DictConfig) -> torch.optim.Optimizer:
+    """
+    Create optimizer from config.
+    
+    Args:
+        model: The model to optimize
+        cfg: Config containing optim section with name, lr, betas, weight_decay
+    
+    Returns:
+        Optimizer instance
+    """
+    optim_cfg = cfg.model.optim
+    optim_name = optim_cfg.get('name', 'adamw').lower()
+    lr = optim_cfg.get('lr', 1e-4)
+    betas = optim_cfg.get('betas', [0.9, 0.999])
+    weight_decay = optim_cfg.get('weight_decay', 0.0)
+    
+    # Convert OmegaConf list to tuple
+    if hasattr(betas, '__iter__') and not isinstance(betas, tuple):
+        betas = tuple(betas)
+    
+    if optim_name == 'adamw':
+        return torch.optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            betas=betas,
+            weight_decay=weight_decay,
+        )
+    elif optim_name == 'adam':
+        return torch.optim.Adam(
+            model.parameters(),
+            lr=lr,
+            betas=betas,
+            weight_decay=weight_decay,
+        )
+    elif optim_name == 'sgd':
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=optim_cfg.get('momentum', 0.9),
+            weight_decay=weight_decay,
+        )
+    else:
+        raise ValueError(f"Unknown optimizer: {optim_name}")
+
+
+def create_scheduler(optimizer: torch.optim.Optimizer, cfg: DictConfig, num_training_steps: int = None):
+    """
+    Create learning rate scheduler from config.
+    
+    Args:
+        optimizer: The optimizer to schedule
+        cfg: Config containing optim.sched section
+        num_training_steps: Total training steps (optional)
+    
+    Returns:
+        Scheduler instance or None
+    """
+    if 'sched' not in cfg.model.optim:
+        return None
+    
+    sched_cfg = cfg.model.optim.sched
+    sched_name = sched_cfg.get('name', 'noam').lower()
+    
+    if sched_name == 'noamannealing' or sched_name == 'noam':
+        # Noam/Transformer scheduler with warmup
+        d_model = sched_cfg.get('d_model', cfg.model.encoder.d_model)
+        warmup_steps = sched_cfg.get('warmup_steps', 10000)
+        min_lr = sched_cfg.get('min_lr', 1e-6)
+        
+        def noam_lambda(step):
+            step = max(step, 1)
+            scale = d_model ** (-0.5)
+            lr_scale = min(step ** (-0.5), step * warmup_steps ** (-1.5))
+            return max(scale * lr_scale, min_lr / optimizer.defaults['lr'])
+        
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, noam_lambda)
+    
+    elif sched_name == 'cosine':
+        warmup_steps = sched_cfg.get('warmup_steps', 1000)
+        
+        def cosine_with_warmup(step):
+            if step < warmup_steps:
+                return step / warmup_steps
+            progress = (step - warmup_steps) / max(1, num_training_steps - warmup_steps)
+            return 0.5 * (1 + np.cos(np.pi * progress))
+        
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, cosine_with_warmup)
+    
+    elif sched_name == 'constant':
+        return None  # No scheduling
+    
+    else:
+        print(f"Warning: Unknown scheduler '{sched_name}', using constant LR")
+        return None
