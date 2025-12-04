@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pure PyTorch training script - No Lightning dependency.
+Pure PyTorch training script - No Lightning, No OmegaConf dependency.
 
 Usage:
     python train_pure_torch.py --config config/nest_fast-conformer.yaml --device cuda
@@ -8,8 +8,8 @@ Usage:
 
 import torch
 import numpy as np
+import yaml
 from pathlib import Path
-from omegaconf import OmegaConf
 from tqdm import tqdm
 import argparse
 import sys
@@ -18,11 +18,96 @@ import os
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
-from models.ssl_model_pure_torch import PureTorchSSLModel, create_optimizer, create_scheduler
+from models.ssl_model_pure_torch import PureTorchSSLModel
+
+
+def create_optimizer_simple(model, cfg: dict, lr: float = None) -> torch.optim.Optimizer:
+    """Create optimizer from plain dict config."""
+    optim_cfg = cfg.get('optim', {})
+    optim_name = optim_cfg.get('name', 'adamw').lower()
+    if lr is None:
+        lr = optim_cfg.get('lr', 1e-4)
+    betas = optim_cfg.get('betas', [0.9, 0.999])
+    weight_decay = optim_cfg.get('weight_decay', 0.0)
+    
+    if isinstance(betas, list):
+        betas = tuple(betas)
+    
+    if optim_name == 'adamw':
+        return torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
+    elif optim_name == 'adam':
+        return torch.optim.Adam(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
+    elif optim_name == 'sgd':
+        return torch.optim.SGD(model.parameters(), lr=lr, momentum=optim_cfg.get('momentum', 0.9), weight_decay=weight_decay)
+    else:
+        raise ValueError(f"Unknown optimizer: {optim_name}")
+
+
+def create_scheduler_simple(optimizer, cfg: dict):
+    """Create scheduler from plain dict config."""
+    optim_cfg = cfg.get('optim', {})
+    sched_cfg = optim_cfg.get('sched', None)
+    
+    if sched_cfg is None:
+        return None
+    
+    sched_name = sched_cfg.get('name', 'noam').lower()
+    
+    if sched_name in ('noamannealing', 'noam'):
+        d_model = sched_cfg.get('d_model', cfg.get('encoder', {}).get('d_model', 512))
+        warmup_steps = sched_cfg.get('warmup_steps', 10000)
+        min_lr = sched_cfg.get('min_lr', 1e-6)
+        
+        def noam_lambda(step):
+            step = max(step, 1)
+            scale = d_model ** (-0.5)
+            lr_scale = min(step ** (-0.5), step * warmup_steps ** (-1.5))
+            return max(scale * lr_scale, min_lr / optimizer.defaults['lr'])
+        
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, noam_lambda)
+    
+    elif sched_name == 'cosine':
+        warmup_steps = sched_cfg.get('warmup_steps', 1000)
+        max_steps = cfg.get('trainer', {}).get('max_steps', 100000)
+        
+        def cosine_with_warmup(step):
+            if step < warmup_steps:
+                return step / warmup_steps
+            progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
+            return 0.5 * (1 + np.cos(np.pi * progress))
+        
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, cosine_with_warmup)
+    
+    return None
 from data import ssl_dataset
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def load_yaml_config(config_path: str) -> dict:
+    """Load YAML config file and resolve interpolations."""
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+    
+    # Resolve simple interpolations like ${model.sample_rate}
+    def resolve_interpolations(obj, root):
+        if isinstance(obj, dict):
+            return {k: resolve_interpolations(v, root) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [resolve_interpolations(v, root) for v in obj]
+        elif isinstance(obj, str) and obj.startswith('${') and obj.endswith('}'):
+            # Resolve interpolation
+            path = obj[2:-1].split('.')
+            val = root
+            for p in path:
+                val = val.get(p, obj)
+                if val == obj:
+                    break
+            return val
+        return obj
+    
+    return resolve_interpolations(cfg, cfg)
 
 
 def set_seed(seed: int = 42):
@@ -152,28 +237,26 @@ def main():
         device = "cpu"
     device = torch.device(device)
     
-    # Load config
+    # Load config using standard YAML (no OmegaConf)
     logger.info(f"Loading config from {args.config}")
-    cfg = OmegaConf.load(args.config)
+    cfg = load_yaml_config(args.config)
+    model_cfg = cfg.get('model', cfg)
     
     # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create model
+    # Create model using from_config_file for proper parameter extraction
     logger.info("Creating model...")
-    model = PureTorchSSLModel(cfg.model)
+    model = PureTorchSSLModel.from_config_file(args.config)
     model.to(device)
     
     # Create optimizer
-    optim_cfg = cfg.model.get('optim', {'name': 'adamw', 'lr': 1e-4})
-    if args.lr is not None:
-        optim_cfg.lr = args.lr
-    optimizer = create_optimizer(model, optim_cfg)
+    lr = args.lr if args.lr is not None else model_cfg.get('optim', {}).get('lr', 1e-4)
+    optimizer = create_optimizer_simple(model, model_cfg, lr=lr)
     
     # Create scheduler
-    sched_cfg = optim_cfg.get('sched', None)
-    scheduler = create_scheduler(optimizer, sched_cfg) if sched_cfg else None
+    scheduler = create_scheduler_simple(optimizer, model_cfg)
     
     # Resume from checkpoint
     start_epoch = 0
@@ -187,13 +270,13 @@ def main():
     train_loader = None
     val_loader = None
     
-    if 'train_ds' in cfg.model and cfg.model.train_ds is not None:
-        train_loader = create_dataloader(cfg.model.train_ds, shuffle=True)
+    if 'train_ds' in model_cfg and model_cfg['train_ds'] is not None:
+        train_loader = create_dataloader(model_cfg['train_ds'], shuffle=True)
         if train_loader:
             logger.info(f"Train dataloader: {len(train_loader)} batches")
     
-    if 'validation_ds' in cfg.model and cfg.model.validation_ds is not None:
-        val_loader = create_dataloader(cfg.model.validation_ds, shuffle=False)
+    if 'validation_ds' in model_cfg and model_cfg['validation_ds'] is not None:
+        val_loader = create_dataloader(model_cfg['validation_ds'], shuffle=False)
         if val_loader:
             logger.info(f"Validation dataloader: {len(val_loader)} batches")
     
