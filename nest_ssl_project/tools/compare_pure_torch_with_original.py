@@ -56,10 +56,18 @@ def copy_weights(src_model, dst_model):
         return key
     
     # Build remapped source state dict
+    # IMPORTANT: NeMo model has BOTH decoder and decoder_ssl with different weights
+    # We want to copy decoder_ssl -> decoder, so we SKIP original decoder keys
     remapped_src_state = {}
     key_mapping = {}  # original_key -> new_key
+    skipped_keys = []
     
     for key, value in src_state.items():
+        # Skip original decoder.* keys because we want decoder_ssl.* to become decoder.*
+        if key.startswith('decoder.') and ('decoder_ssl.' + key[8:]) in src_state:
+            skipped_keys.append(key)
+            continue
+        
         new_key = normalize_key(key)
         if new_key in dst_state:
             remapped_src_state[new_key] = value
@@ -67,6 +75,9 @@ def copy_weights(src_model, dst_model):
                 key_mapping[key] = new_key
         else:
             remapped_src_state[key] = value  # Keep original if no match
+    
+    if skipped_keys:
+        print(f"   Skipped {len(skipped_keys)} duplicate decoder keys (using decoder_ssl instead):")
     
     src_keys = set(remapped_src_state.keys())
     dst_keys = set(dst_state.keys())
