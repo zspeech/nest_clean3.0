@@ -185,19 +185,26 @@ def run_comparison(config_path: str, device: str = 'cuda'):
         from models.ssl_models import EncDecDenoiseMaskedTokenPredModel
         from omegaconf import OmegaConf, open_dict
         
-        # Convert dict to OmegaConf
+        # Convert dict to OmegaConf - pass only the model section
         omega_cfg = OmegaConf.create(cfg)
-        with open_dict(omega_cfg):
-            if 'model' in omega_cfg:
-                if 'train_ds' in omega_cfg.model:
-                    omega_cfg.model.train_ds = None
-                if 'validation_ds' in omega_cfg.model:
-                    omega_cfg.model.validation_ds = None
-                if 'test_ds' in omega_cfg.model:
-                    omega_cfg.model.test_ds = None
+        
+        # Get model config section
+        if 'model' in omega_cfg:
+            model_cfg = omega_cfg.model
+        else:
+            model_cfg = omega_cfg
+        
+        # Disable data loaders
+        with open_dict(model_cfg):
+            if 'train_ds' in model_cfg:
+                model_cfg.train_ds = None
+            if 'validation_ds' in model_cfg:
+                model_cfg.validation_ds = None
+            if 'test_ds' in model_cfg:
+                model_cfg.test_ds = None
         
         set_seed(42)
-        original_model = EncDecDenoiseMaskedTokenPredModel(cfg=omega_cfg)
+        original_model = EncDecDenoiseMaskedTokenPredModel(cfg=model_cfg)
         original_model = original_model.to(device)
         original_model.eval()
         print(f"   Loaded successfully. Parameters: {sum(p.numel() for p in original_model.parameters()):,}")
