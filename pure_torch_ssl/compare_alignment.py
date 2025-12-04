@@ -156,12 +156,31 @@ def run_comparison(config_path: str, device: str = 'cuda'):
     # 2. Try to import original model
     print("\n2. Creating original model...")
     try:
-        # Add parent directory to path (nest_ssl_v2 contains models/ssl_models.py)
+        # Try multiple possible locations for the original model
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(script_dir)  # nest_ssl_v2
-        if parent_dir not in sys.path:
-            sys.path.insert(0, parent_dir)
-        print(f"   Looking for original model in: {parent_dir}")
+        parent_dir = os.path.dirname(script_dir)
+        
+        # Possible paths where models/ssl_models.py might be
+        possible_paths = [
+            parent_dir,  # ../
+            os.path.join(parent_dir, 'nest_ssl_v2'),  # ../nest_ssl_v2
+            os.path.join(parent_dir, 'nest_ssl_project'),  # ../nest_ssl_project
+            os.getcwd(),  # current working directory
+        ]
+        
+        model_found = False
+        for path in possible_paths:
+            models_path = os.path.join(path, 'models', 'ssl_models.py')
+            if os.path.exists(models_path):
+                if path not in sys.path:
+                    sys.path.insert(0, path)
+                print(f"   Found original model in: {path}")
+                model_found = True
+                break
+        
+        if not model_found:
+            print(f"   Searched paths: {possible_paths}")
+            raise ImportError("Could not find models/ssl_models.py")
         
         from models.ssl_models import EncDecDenoiseMaskedTokenPredModel
         from omegaconf import OmegaConf, open_dict
