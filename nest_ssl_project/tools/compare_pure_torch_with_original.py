@@ -304,19 +304,38 @@ def run_comparison(config_path=None, device='cpu'):
     print("\n6. Creating test batch...")
     batch = create_dummy_batch(batch_size=2, audio_len=160000, device=device)
     
-    # Forward pass - original
-    print("\n7. Running forward pass on original model...")
+    # Forward pass - use manual forward to ensure both use same decoder (decoder_ssl for original)
+    # NeMo's forward() uses self.decoder, but we copied decoder_ssl weights, so we use decoder_ssl manually
+    print("\n7. Running forward pass (manual to use decoder_ssl)...")
     set_seed(42)
     with torch.no_grad():
-        orig_out = original_model.forward(
-            input_signal=batch.audio,
-            input_signal_length=batch.audio_len,
-            noise_signal=batch.noise,
-            noise_signal_length=batch.noise_len,
-            noisy_input_signal=batch.noisy_audio,
-            noisy_input_signal_length=batch.noisy_audio_len,
-            apply_mask=True,
+        # Original model - manual forward using decoder_ssl
+        orig_processed, orig_len = original_model.preprocessor(
+            input_signal=batch.audio, length=batch.audio_len
         )
+        orig_noisy_processed, orig_noisy_len = original_model.preprocessor(
+            input_signal=batch.noisy_audio, length=batch.noisy_audio_len
+        )
+        
+        # Apply mask
+        set_seed(42)
+        masked_signal_orig, masks_orig = original_model.mask_processor(
+            input_signal=orig_noisy_processed, length=orig_noisy_len
+        )
+        
+        # Get tokens
+        _, tokens_orig = original_model.quantizer(input_signal=orig_processed)
+        
+        # Encode
+        encoded_orig, encoded_len_orig = original_model.encoder(
+            audio_signal=masked_signal_orig, length=orig_noisy_len
+        )
+        
+        # Decode using decoder_ssl (not decoder)
+        orig_decoder = getattr(original_model, 'decoder_ssl', original_model.decoder)
+        log_probs_orig = orig_decoder(encoder_output=encoded_orig)
+        
+        orig_out = (log_probs_orig, encoded_len_orig, masks_orig, tokens_orig)
     
     # Forward pass - pure torch
     print("   Running forward pass on pure torch model...")
