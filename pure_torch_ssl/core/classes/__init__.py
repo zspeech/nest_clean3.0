@@ -1,7 +1,5 @@
-# Simplified core classes for standalone use
-from .neural_module import NeuralModule
-from .loss import Loss
+# Minimal core classes - no type checking
 from .common import typecheck, Typing
-from .exportable import Exportable
+from .loss import Loss
 
-__all__ = ['NeuralModule', 'Loss', 'typecheck', 'Typing', 'Exportable']
+__all__ = ['typecheck', 'Typing', 'Loss']

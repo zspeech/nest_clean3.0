@@ -34,8 +34,7 @@ try:
 except ImportError:
     HAVE_TORCHAUDIO = False
 
-from core.classes.neural_module import NeuralModule
-from core.neural_types import AudioSignal, LengthsType, MelSpectrogramType, NeuralType
+# No type checking - standalone version
 
 CONSTANT = 1e-5
 
@@ -318,24 +317,8 @@ class FilterbankFeatures(nn.Module):
         return x, seq_len
 
 
-class AudioToMelSpectrogramPreprocessor(NeuralModule):
-    """
-    Audio to mel spectrogram preprocessor matching NeMo's implementation.
-    """
-    
-    @property
-    def input_types(self):
-        return {
-            "input_signal": NeuralType(('B', 'T'), AudioSignal()),
-            "length": NeuralType(tuple('B'), LengthsType()),
-        }
-    
-    @property
-    def output_types(self):
-        return {
-            "processed_signal": NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
-            "processed_length": NeuralType(tuple('B'), LengthsType()),
-        }
+class AudioToMelSpectrogramPreprocessor(torch.nn.Module):
+    """Audio to mel spectrogram preprocessor."""
     
     def __init__(
         self,

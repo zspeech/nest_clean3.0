@@ -13,37 +13,18 @@
 # limitations under the License.
 
 
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
 
-from core.classes.neural_module import NeuralModule
-from core.neural_types import AcousticEncodedRepresentation, LengthsType, NeuralType
 
+class RandomBlockMasking(nn.Module):
+    """Random block masking for SSL."""
 
-class RandomBlockMasking(NeuralModule):
-    """
-    Performs random block masking on sequence of features.
-    Args:
-        mask_prob (float): percentage of sequence to mask
-        block_size (int): size of each block to mask
-        mask_value (Optional[float]): value to use for masking, if None, use random values
-        feat_in (Optional[int]): size of input features, required if mask_value is None
-        freeze (bool): if True, mask embedding is not trainable
-        allow_overlap (bool): if True, masked blocks can overlap
-    """
-
-    def __init__(
-        self,
-        feat_in: int,
-        mask_prob: float = 0.5,
-        block_size: int = 48,
-        mask_value: Optional[float] = None,
-        freeze: bool = True,
-        allow_overlap: bool = False,
-        max_mask_ratio: float = 0.8,
-    ):
+    def __init__(self, feat_in: int, mask_prob: float = 0.5, block_size: int = 48,
+                 mask_value: Optional[float] = None, freeze: bool = True,
+                 allow_overlap: bool = False, max_mask_ratio: float = 0.8):
         super().__init__()
         self.block_size = block_size
         self.mask_prob = mask_prob
@@ -56,23 +37,8 @@ class RandomBlockMasking(NeuralModule):
         else:
             self.mask_embedding = nn.Parameter(torch.ones(feat_in) * mask_value, requires_grad=False)
         if freeze:
-            self.freeze()
-
-    @property
-    def input_types(self):
-        """Returns definitions of module input types"""
-        return {
-            "input_feats": NeuralType(('B', 'D', 'T'), AcousticEncodedRepresentation()),
-            "input_lengths": NeuralType(tuple('B'), LengthsType()),
-        }
-
-    @property
-    def output_types(self):
-        """Returns definitions of module output types"""
-        return {
-            "maksed_feats": NeuralType(('B', 'D', 'T'), AcousticEncodedRepresentation()),
-            "masks": NeuralType(('B', 'D', 'T'), AcousticEncodedRepresentation()),
-        }
+            for param in self.parameters():
+                param.requires_grad = False
 
     def forward(self, input_feats: torch.Tensor, input_lengths: torch.Tensor):
         """
@@ -180,12 +146,10 @@ class RandomBlockMasking(NeuralModule):
         return masked_feats, masks
 
 
-class ConvFeatureMaksingWrapper(NeuralModule):
-    """
-    A wrapper module that applies masking to the features after subsampling layer of ConformerEncoder.
-    """
+class ConvFeatureMaksingWrapper(nn.Module):
+    """Wrapper that applies masking after ConformerEncoder's subsampling."""
 
-    def __init__(self, pre_encode_module: nn.Module, masking_module: Union[nn.Module, NeuralModule]) -> None:
+    def __init__(self, pre_encode_module: nn.Module, masking_module: nn.Module) -> None:
         """
         Args:
             pre_encode_module: the pre_encode module of the ConformerEncoder instance

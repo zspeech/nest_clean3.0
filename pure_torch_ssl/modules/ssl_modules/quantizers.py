@@ -16,13 +16,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from core.classes.neural_module import NeuralModule
-from core.classes.exportable import Exportable
-from core.classes.common import typecheck
-from core.neural_types import LabelsType, NeuralType, SpectrogramType
 
-
-class RandomProjectionVectorQuantizer(NeuralModule, Exportable):
+class RandomProjectionVectorQuantizer(nn.Module):
     DIST_FN_LIST = ["l2", "cosine"]
 
     def __init__(
@@ -75,39 +70,9 @@ class RandomProjectionVectorQuantizer(NeuralModule, Exportable):
         codebooks = F.normalize(codebooks, dim=-1)
         self.codebooks = nn.Parameter(codebooks)
         if freeze:
-            self.freeze()
+            for param in self.parameters():
+                param.requires_grad = False
 
-    @property
-    def input_types(self):
-        """Returns definitions of module input ports."""
-        if self.time_ahead:
-            return {"input_signal": NeuralType(('B', 'T', 'D'), SpectrogramType())}
-        return {"input_signal": NeuralType(('B', 'D', 'T'), SpectrogramType())}
-
-    @property
-    def output_types(self):
-        """Returns definitions of module output ports."""
-        if self.time_ahead:
-            if self.num_books == 1 and self.squeeze_single:
-                return {
-                    "xq": NeuralType(('B', 'T', 'D'), SpectrogramType()),
-                    "xid": NeuralType(('B', 'T'), LabelsType()),
-                }
-            return {
-                "xq": NeuralType(('B', 'T', 'D', 'H'), SpectrogramType()),
-                "xid": NeuralType(('B', 'T', 'H'), LabelsType()),
-            }
-        if self.num_books == 1 and self.squeeze_single:
-            return {
-                "xq": NeuralType(('B', 'D', 'T'), SpectrogramType()),
-                "xid": NeuralType(('B', 'T'), LabelsType()),
-            }
-        return {
-            "xq": NeuralType(('B', 'D', 'T', 'H'), SpectrogramType()),
-            "xid": NeuralType(('B', 'T', 'H'), LabelsType()),
-        }
-
-    @typecheck()
     def forward(self, input_signal):
         """
         Args:
