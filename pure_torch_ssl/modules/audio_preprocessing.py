@@ -397,25 +397,8 @@ class AudioToMelSpectrogramPreprocessor(torch.nn.Module):
         return self.featurizer(input_signal, length)
 
 
-class SpectrogramAugmentation(NeuralModule):
-    """
-    Spectrogram augmentation module (matching NeMo's interface).
-    Currently a no-op since freq_masks and time_masks are set to 0 in config.
-    """
-    
-    @property
-    def input_types(self):
-        return {
-            "input_spec": NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
-            "length": NeuralType(tuple('B'), LengthsType()),
-        }
-    
-    @property
-    def output_types(self):
-        return {
-            "augmented_spec": NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
-            "length": NeuralType(tuple('B'), LengthsType()),
-        }
+class SpectrogramAugmentation(torch.nn.Module):
+    """Spectrogram augmentation (no-op when masks=0)."""
     
     def __init__(
         self,
