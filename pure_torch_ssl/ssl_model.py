@@ -44,53 +44,9 @@ from modules.ssl_modules.masking import RandomBlockMasking, ConvFeatureMaksingWr
 from modules.ssl_modules.quantizers import RandomProjectionVectorQuantizer
 from modules.ssl_modules.multi_softmax_decoder import MultiSoftmaxDecoder
 from losses.ssl_losses.mlm import MultiMLMLoss
+from hparams import Hyperparams, setup_hparams, HPARAMS_REGISTRY
 
-__all__ = ['PureTorchSSLModel', 'Hyperparams', 'setup_hparams', 'create_optimizer', 'create_scheduler']
-
-
-# ============================================================================
-# Hyperparams Configuration System
-# ============================================================================
-
-class Hyperparams(dict):
-    """Dict subclass that allows attribute-style access (cfg.key)."""
-    
-    def __getattr__(self, attr):
-        try:
-            return self[attr]
-        except KeyError:
-            raise AttributeError(f"'Hyperparams' object has no attribute '{attr}'")
-    
-    def __setattr__(self, attr, value):
-        self[attr] = value
-    
-    def __repr__(self):
-        return f"Hyperparams({dict.__repr__(self)})"
-
-
-def setup_hparams(config: dict, overrides: dict = None) -> Hyperparams:
-    """
-    Convert a nested dict config into Hyperparams with attribute access.
-    
-    Args:
-        config: Dict config (can be nested)
-        overrides: Optional dict of overrides
-    
-    Returns:
-        Hyperparams object with cfg.key.subkey access
-    """
-    H = Hyperparams()
-    
-    for k, v in config.items():
-        if isinstance(v, dict):
-            H[k] = setup_hparams(v, {})
-        else:
-            H[k] = v
-    
-    if overrides:
-        H.update(overrides)
-    
-    return H
+__all__ = ['PureTorchSSLModel', 'create_optimizer', 'create_scheduler']
 
 
 def _load_yaml_config(config_path: str) -> Hyperparams:
@@ -120,70 +76,6 @@ def _load_yaml_config(config_path: str) -> Hyperparams:
 
 
 # ============================================================================
-# Default Configuration
-# ============================================================================
-
-def get_default_config() -> Hyperparams:
-    """Get default SSL model configuration."""
-    return setup_hparams({
-        'sample_rate': 16000,
-        'num_classes': 8192,
-        'num_books': 1,
-        'code_dim': 16,
-        'squeeze_single': False,
-        'mask_position': 'pre_conv',
-        
-        'preprocessor': {
-            'features': 80,
-            'window_size': 0.025,
-            'window_stride': 0.01,
-            'n_fft': 512,
-            'normalize': 'per_feature',
-            'log': True,
-            'dither': 0.0,
-            'pad_to': 16,
-        },
-        
-        'encoder': {
-            'n_layers': 17,
-            'd_model': 512,
-            'n_heads': 8,
-            'subsampling': 'dw_striding',
-            'subsampling_factor': 8,
-            'subsampling_conv_channels': 256,
-            'ff_expansion_factor': 4,
-            'conv_kernel_size': 9,
-            'dropout': 0.1,
-            'dropout_pre_encoder': 0.1,
-            'dropout_emb': 0.0,
-            'dropout_att': 0.1,
-        },
-        
-        'masking': {
-            'block_size': 40,
-            'mask_prob': 0.01,
-            'freeze': True,
-            'allow_overlap': True,
-        },
-        
-        'decoder': {
-            'use_bias': True,
-        },
-        
-        'loss': {
-            'mask_threshold': 0.8,
-        },
-        
-        'optim': {
-            'name': 'adamw',
-            'lr': 1e-4,
-            'betas': [0.9, 0.999],
-            'weight_decay': 0.0,
-        },
-    }, {})
-
-
-# ============================================================================
 # SSL Model
 # ============================================================================
 
@@ -210,15 +102,16 @@ class PureTorchSSLModel(nn.Module):
         super().__init__()
         self.cfg = cfg
         
-        # Merge with defaults
-        defaults = get_default_config()
-        for key in defaults:
-            if key not in cfg:
-                cfg[key] = defaults[key]
-            elif isinstance(defaults[key], Hyperparams) and key in cfg:
-                for subkey in defaults[key]:
-                    if subkey not in cfg[key]:
-                        cfg[key][subkey] = defaults[key][subkey]
+        # Merge with defaults from registry if needed
+        if 'ssl_model_large' in HPARAMS_REGISTRY:
+            defaults = setup_hparams(HPARAMS_REGISTRY['ssl_model_large'], {})
+            for key in defaults:
+                if key not in cfg:
+                    cfg[key] = defaults[key]
+                elif isinstance(defaults[key], Hyperparams) and isinstance(cfg[key], Hyperparams):
+                    for subkey in defaults[key]:
+                        if subkey not in cfg[key]:
+                            cfg[key][subkey] = defaults[key][subkey]
         
         # Preprocessor
         print("Initializing preprocessor...")
@@ -447,28 +340,45 @@ class PureTorchSSLModel(nn.Module):
 
 def create_optimizer(model: nn.Module, cfg: Hyperparams) -> torch.optim.Optimizer:
     """
-    Create optimizer from config.
+    Create optimizer from config using Optimizer hyperparams.
     
     Args:
         model: Model to optimize
-        cfg: Config with cfg.optim.name, cfg.optim.lr, etc.
+        cfg: Config with cfg.Optimizer.lr, cfg.Optimizer.optimizer_name, etc.
     """
-    optim_cfg = cfg.get('optim', Hyperparams())
-    optim_name = str(optim_cfg.get('name', 'adamw')).lower()
+    optim_cfg = cfg.get('Optimizer', Hyperparams())
+    optim_name = str(optim_cfg.get('optimizer_name', 'adamw')).lower()
     lr = float(optim_cfg.get('lr', 1e-4))
     weight_decay = float(optim_cfg.get('weight_decay', 0.0))
-    betas = optim_cfg.get('betas', [0.9, 0.999])
-    
-    if isinstance(betas, list):
-        betas = tuple(float(b) for b in betas)
+    beta1 = float(optim_cfg.get('beta1', 0.9))
+    beta2 = float(optim_cfg.get('beta2', 0.999))
+    eps = float(optim_cfg.get('eps', 1e-8))
+    betas = (beta1, beta2)
     
     if optim_name == 'adamw':
-        return torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
+        return torch.optim.AdamW(
+            model.parameters(), 
+            lr=lr, 
+            betas=betas, 
+            weight_decay=weight_decay,
+            eps=eps
+        )
     elif optim_name == 'adam':
-        return torch.optim.Adam(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
+        return torch.optim.Adam(
+            model.parameters(), 
+            lr=lr, 
+            betas=betas, 
+            weight_decay=weight_decay,
+            eps=eps
+        )
     elif optim_name == 'sgd':
         momentum = float(optim_cfg.get('momentum', 0.9))
-        return torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        return torch.optim.SGD(
+            model.parameters(), 
+            lr=lr, 
+            momentum=momentum, 
+            weight_decay=weight_decay
+        )
     else:
         raise ValueError(f"Unknown optimizer: {optim_name}")
 
@@ -477,21 +387,52 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: Hyperparams, num_tra
     """
     Create learning rate scheduler from config.
     
+    Supports:
+        - Noam annealing (from Optimizer.lr_warmup)
+        - Cosine decay (from scheduler_cosine)
+        - Constant (no decay)
+    
     Args:
         optimizer: Optimizer instance
-        cfg: Config with cfg.optim.sched.name, etc.
+        cfg: Config with cfg.Optimizer or cfg.scheduler_* settings
+        num_training_steps: Total training steps (for cosine decay)
     """
-    optim_cfg = cfg.get('optim', Hyperparams())
-    sched_cfg = optim_cfg.get('sched', None)
+    optim_cfg = cfg.get('Optimizer', Hyperparams())
+    
+    # Check if scheduler is specified in Optimizer config
+    if optim_cfg.get('lr_use_constant', False):
+        return None  # No scheduler
+    
+    # Check for scheduler config
+    sched_cfg = None
+    if 'scheduler_name' in cfg:
+        sched_cfg = cfg
+    elif hasattr(cfg, 'scheduler_name'):
+        sched_cfg = cfg
     
     if sched_cfg is None:
+        # Use Noam by default if lr_warmup is set
+        if optim_cfg.get('lr_warmup', 0) > 0:
+            warmup_steps = int(optim_cfg.get('lr_warmup', 10000))
+            d_model = int(cfg.get('encoder', Hyperparams()).get('d_model', 512))
+            min_lr = float(optim_cfg.get('lr_min_scale', 0.0)) * float(optim_cfg.get('lr', 1e-4))
+            if min_lr == 0:
+                min_lr = 1e-6
+            
+            def noam_lambda(step):
+                step = max(step, 1)
+                scale = d_model ** (-0.5)
+                lr_scale = min(step ** (-0.5), step * warmup_steps ** (-1.5))
+                return max(scale * lr_scale, min_lr / optimizer.defaults['lr'])
+            
+            return torch.optim.lr_scheduler.LambdaLR(optimizer, noam_lambda)
         return None
     
-    sched_name = str(sched_cfg.get('name', 'noam')).lower()
+    sched_name = str(sched_cfg.get('scheduler_name', 'noam')).lower()
     
     if sched_name in ('noamannealing', 'noam'):
         d_model = int(sched_cfg.get('d_model', cfg.encoder.d_model))
-        warmup_steps = int(sched_cfg.get('warmup_steps', 10000))
+        warmup_steps = int(sched_cfg.get('warmup_steps', optim_cfg.get('lr_warmup', 10000)))
         min_lr = float(sched_cfg.get('min_lr', 1e-6))
         
         def noam_lambda(step):
@@ -504,7 +445,7 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: Hyperparams, num_tra
     
     elif sched_name == 'cosine':
         warmup_steps = int(sched_cfg.get('warmup_steps', 1000))
-        max_steps = num_training_steps or 100000
+        max_steps = num_training_steps or int(optim_cfg.get('lr_decay', 100000))
         
         def cosine_with_warmup(step):
             if step < warmup_steps:

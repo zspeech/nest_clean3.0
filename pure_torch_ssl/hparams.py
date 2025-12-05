@@ -6,15 +6,16 @@
 #     from hparams import setup_hparams, HPARAMS_REGISTRY
 #     
 #     # Use predefined config
-#     cfg = setup_hparams(HPARAMS_REGISTRY["ssl_large"], {})
+#     cfg = setup_hparams(HPARAMS_REGISTRY["defaults"], {})
 #     
-#     # Or combine multiple configs with overrides
+#     # Combine multiple configs
 #     cfg = setup_hparams({
-#         **HPARAMS_REGISTRY["ssl_large"],
-#         **HPARAMS_REGISTRY["optimizer_adamw"],
-#     }, {"encoder": {"d_model": 768}})
+#         **HPARAMS_REGISTRY["defaults"],
+#         **HPARAMS_REGISTRY["ssl_model"],
+#         **HPARAMS_REGISTRY["Optimizer"],
+#     }, {"Optimizer": {"lr": 1e-4}})
 
-from typing import Dict, Any
+import os.path as osp
 
 __all__ = ['Hyperparams', 'setup_hparams', 'HPARAMS_REGISTRY', 'register_hparams']
 
@@ -27,59 +28,17 @@ class Hyperparams(dict):
     """Dict subclass that allows attribute-style access (cfg.key)."""
     
     def __getattr__(self, attr):
-        try:
-            return self[attr]
-        except KeyError:
-            raise AttributeError(f"'Hyperparams' object has no attribute '{attr}'")
+        return self[attr]
     
     def __setattr__(self, attr, value):
         self[attr] = value
-    
-    def __repr__(self):
-        return f"Hyperparams({dict.__repr__(self)})"
-    
-    def get(self, key, default=None):
-        """Get value with default."""
-        return super().get(key, default)
-
-
-def setup_hparams(config: dict, overrides: dict = None) -> Hyperparams:
-    """
-    Convert a nested dict config into Hyperparams with attribute access.
-    
-    Args:
-        config: Dict config (can be nested)
-        overrides: Optional dict of overrides (can be nested)
-    
-    Returns:
-        Hyperparams object with cfg.key.subkey access
-    """
-    H = Hyperparams()
-    
-    for k, v in config.items():
-        if isinstance(v, dict):
-            H[k] = setup_hparams(v, {})
-        else:
-            H[k] = v
-    
-    # Apply overrides
-    if overrides:
-        for k, v in overrides.items():
-            if isinstance(v, dict) and k in H and isinstance(H[k], Hyperparams):
-                # Merge nested dicts
-                for sub_k, sub_v in v.items():
-                    H[k][sub_k] = sub_v
-            else:
-                H[k] = v
-    
-    return H
 
 
 # ============================================================================
 # Registry
 # ============================================================================
 
-HPARAMS_REGISTRY: Dict[str, dict] = {}
+HPARAMS_REGISTRY = {}
 
 
 def register_hparams(name: str, hparams: dict):
@@ -87,331 +46,501 @@ def register_hparams(name: str, hparams: dict):
     HPARAMS_REGISTRY[name] = hparams
 
 
+def setup_hparams(hparam_set_names, kwargs):
+    """
+    Setup hyperparameters from registry entries and kwargs.
+    
+    Args:
+        hparam_set_names: Dict of hyperparameters or registry key names
+        kwargs: Additional overrides
+    
+    Returns:
+        Hyperparams object
+    """
+    H = Hyperparams()
+    
+    # If hparam_set_names is a dict, use it directly
+    if isinstance(hparam_set_names, dict):
+        for k, v in hparam_set_names.items():
+            if isinstance(v, dict):
+                tmp = Hyperparams()
+                tmp.update(v)
+                H[k] = tmp
+            else:
+                H[k] = v
+    else:
+        # If it's a string or list, look up in registry
+        if isinstance(hparam_set_names, str):
+            hparam_set_names = hparam_set_names.split(",")
+        
+        if isinstance(hparam_set_names, (list, tuple)):
+            for name in hparam_set_names:
+                name = name.strip()
+                if name in HPARAMS_REGISTRY:
+                    hps = HPARAMS_REGISTRY[name]
+                    for k, v in hps.items():
+                        if isinstance(v, dict):
+                            if k not in H:
+                                H[k] = Hyperparams()
+                            H[k].update(v)
+                        else:
+                            H[k] = v
+    
+    # Apply kwargs overrides
+    for k, v in kwargs.items():
+        if isinstance(v, dict):
+            if k not in H:
+                H[k] = Hyperparams()
+            H[k].update(v)
+        else:
+            H[k] = v
+    
+    return H
+
+
 # ============================================================================
 # Default Configurations
 # ============================================================================
 
-# Base defaults
-register_hparams("defaults", {
-    "sample_rate": 16000,
-    "num_classes": 8192,
-    "num_books": 1,
-    "code_dim": 16,
-    "squeeze_single": False,
-    "mask_position": "pre_conv",
-})
+# Base defaults (from user's example)
+defaults = Hyperparams(
+    project="ssl_nest",
+    train=True,
+    finetune=False,
+    fsdp=False,
+    fp16_opt=False,
+    fp16=False,
+    ema=False,
+    cpu_ema=True,
+    cpu_ema_freq=100,
+    ema_fused=False,
+    param_dtype="fp32",
+    reduce_dtype="fp32",
+    buffer_dtype="fp32",
+    label_rate=25,
+    fp16_loss_scale=None,
+    fp16_scale_window=1000.0,
+    restore_prior=None,
+    mu=None,
+    local_logdir="logs",
+    name="SSL-NEST",
+    curr_epoch=-1,
+    epochs=1000000,
+    grad_accum_iters=1,
+    iters_before_update=1,
+    log_steps=100,
+    save=True,
+    save_iters=10000,
+)
 
-# Preprocessor configs
-register_hparams("preprocessor_default", {
-    "preprocessor": {
-        "features": 80,
-        "window_size": 0.025,
-        "window_stride": 0.01,
-        "n_fft": 512,
-        "normalize": "per_feature",
-        "log": True,
-        "dither": 0.0,
-        "pad_to": 16,
-    }
-})
+HPARAMS_REGISTRY["defaults"] = defaults
 
-# Masking configs
-register_hparams("masking_default", {
-    "masking": {
-        "block_size": 40,
-        "mask_prob": 0.01,
-        "freeze": True,
-        "allow_overlap": True,
-    }
-})
+# Utils
+utils = Hyperparams(
+    seed=42,
+    num_threads=1,
+)
 
-# Loss configs
-register_hparams("loss_default", {
-    "loss": {
-        "mask_threshold": 0.8,
-    }
-})
+HPARAMS_REGISTRY["utils"] = utils
 
-# Decoder configs
-register_hparams("decoder_default", {
-    "decoder": {
-        "use_bias": True,
-    }
-})
+# Data
+data = Hyperparams(
+    sr=16000,
+    min_audio_length=1.0,
+    split_by_rank=False,
+    bs=8,
+    nworkers=8,
+    train_data_path=None,
+    train_dict_path=None,
+    val_data_path=None,
+    val_dict_path=None,
+    test_data_path=None,
+    test_dict_path=None,
+)
 
-# ============================================================================
-# Encoder Variants (based on FastConformer)
-# ============================================================================
+HPARAMS_REGISTRY["data"] = data
 
-# Small (14M params)
-register_hparams("encoder_small", {
-    "encoder": {
-        "n_layers": 16,
-        "d_model": 176,
-        "n_heads": 4,
-        "subsampling": "dw_striding",
-        "subsampling_factor": 8,
-        "subsampling_conv_channels": 256,
-        "ff_expansion_factor": 4,
-        "conv_kernel_size": 9,
-        "dropout": 0.1,
-        "dropout_pre_encoder": 0.1,
-        "dropout_emb": 0.0,
-        "dropout_att": 0.1,
-        "use_bias": True,
-        "xscaling": True,
-    }
-})
+# CTC Loss (for compatibility, not used in SSL)
+ctc_loss = Hyperparams(
+    blank=0,
+    vocab_size=8192,
+)
 
-# Medium (32M params)
-register_hparams("encoder_medium", {
-    "encoder": {
-        "n_layers": 16,
-        "d_model": 256,
-        "n_heads": 4,
-        "subsampling": "dw_striding",
-        "subsampling_factor": 8,
-        "subsampling_conv_channels": 256,
-        "ff_expansion_factor": 4,
-        "conv_kernel_size": 9,
-        "dropout": 0.1,
-        "dropout_pre_encoder": 0.1,
-        "dropout_emb": 0.0,
-        "dropout_att": 0.1,
-        "use_bias": True,
-        "xscaling": True,
-    }
-})
+HPARAMS_REGISTRY["ctc_loss"] = ctc_loss
 
-# Large (120M params)
-register_hparams("encoder_large", {
-    "encoder": {
-        "n_layers": 17,
-        "d_model": 512,
-        "n_heads": 8,
-        "subsampling": "dw_striding",
-        "subsampling_factor": 8,
-        "subsampling_conv_channels": 256,
-        "ff_expansion_factor": 4,
-        "conv_kernel_size": 9,
-        "dropout": 0.1,
-        "dropout_pre_encoder": 0.1,
-        "dropout_emb": 0.0,
-        "dropout_att": 0.1,
-        "use_bias": True,
-        "xscaling": True,
-    }
-})
+# Models
+Models = Hyperparams(
+    SSLModel=None,  # Path to SSL model checkpoint
+)
 
-# XLarge (616M params)
-register_hparams("encoder_xlarge", {
-    "encoder": {
-        "n_layers": 24,
-        "d_model": 1024,
-        "n_heads": 8,
-        "subsampling": "dw_striding",
-        "subsampling_factor": 8,
-        "subsampling_conv_channels": 256,
-        "ff_expansion_factor": 4,
-        "conv_kernel_size": 9,
-        "dropout": 0.1,
-        "dropout_pre_encoder": 0.1,
-        "dropout_emb": 0.0,
-        "dropout_att": 0.1,
-        "use_bias": False,
-        "xscaling": False,
-    }
-})
+HPARAMS_REGISTRY["Models"] = Models
 
-# XXLarge (1.2B params)
-register_hparams("encoder_xxlarge", {
-    "encoder": {
-        "n_layers": 42,
-        "d_model": 1024,
-        "n_heads": 8,
-        "subsampling": "dw_striding",
-        "subsampling_factor": 8,
-        "subsampling_conv_channels": 256,
-        "ff_expansion_factor": 4,
-        "conv_kernel_size": 5,
-        "dropout": 0.1,
-        "dropout_pre_encoder": 0.1,
-        "dropout_emb": 0.0,
-        "dropout_att": 0.1,
-        "use_bias": False,
-        "xscaling": False,
-    }
-})
+# Distributed
+Distributed = Hyperparams(
+    bucket=128,
+)
+
+HPARAMS_REGISTRY["Distributed"] = Distributed
+
+# Optimizer
+Optimizer = Hyperparams(
+    beta1=0.9,
+    beta2=0.999,
+    lr=1.0e-4,
+    weight_decay=0.0,
+    eps=1e-08,
+    lr_min_scale=0.0,
+    lr_use_linear_decay=False,
+    lr_scale=1.0,
+    lr_warmup=10000.0,
+    lr_start_linear_decay=0,
+    lr_decay=10000000000.0,
+    lr_use_cosine_decay=False,
+    lr_use_constant=False,
+    lr_gamma=1.0,
+    ignore_grad_norm=0,
+    optimizer_name="adamw",  # adamw, adam, sgd
+)
+
+HPARAMS_REGISTRY["Optimizer"] = Optimizer
 
 # ============================================================================
-# Optimizer Configs
+# SSL Model Configurations
 # ============================================================================
 
-register_hparams("optimizer_adamw", {
-    "optim": {
-        "name": "adamw",
-        "lr": 1e-4,
-        "betas": [0.9, 0.999],
-        "weight_decay": 1e-3,
-        "eps": 1e-8,
-    }
-})
+# SSL Model - Small (14M)
+ssl_model_small = Hyperparams(
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=16,
+        d_model=176,
+        n_heads=4,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=9,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=True,
+        xscaling=True,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=True,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
+)
 
-register_hparams("optimizer_adam", {
-    "optim": {
-        "name": "adam",
-        "lr": 1e-4,
-        "betas": [0.9, 0.999],
-        "weight_decay": 0.0,
-        "eps": 1e-8,
-    }
-})
+HPARAMS_REGISTRY["ssl_model_small"] = ssl_model_small
 
-register_hparams("optimizer_sgd", {
-    "optim": {
-        "name": "sgd",
-        "lr": 1e-3,
-        "momentum": 0.9,
-        "weight_decay": 1e-4,
-    }
-})
+# SSL Model - Medium (32M)
+ssl_model_medium = Hyperparams(
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=16,
+        d_model=256,
+        n_heads=4,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=9,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=True,
+        xscaling=True,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=True,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
+)
+
+HPARAMS_REGISTRY["ssl_model_medium"] = ssl_model_medium
+
+# SSL Model - Large (120M) - Default
+ssl_model_large = Hyperparams(
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=17,
+        d_model=512,
+        n_heads=8,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=9,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=True,
+        xscaling=True,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=True,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
+)
+
+HPARAMS_REGISTRY["ssl_model_large"] = ssl_model_large
+
+# SSL Model - XLarge (616M)
+ssl_model_xlarge = Hyperparams(
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=24,
+        d_model=1024,
+        n_heads=8,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=9,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=False,
+        xscaling=False,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=False,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
+)
+
+HPARAMS_REGISTRY["ssl_model_xlarge"] = ssl_model_xlarge
+
+# SSL Model - XXLarge (1.2B)
+ssl_model_xxlarge = Hyperparams(
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=42,
+        d_model=1024,
+        n_heads=8,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=5,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=False,
+        xscaling=False,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=False,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
+)
+
+HPARAMS_REGISTRY["ssl_model_xxlarge"] = ssl_model_xxlarge
 
 # ============================================================================
-# Scheduler Configs
+# Scheduler Configurations
 # ============================================================================
 
-register_hparams("scheduler_noam", {
-    "optim": {
-        "sched": {
-            "name": "noam",
-            "warmup_steps": 10000,
-            "min_lr": 1e-6,
-        }
-    }
-})
+# Noam Annealing Scheduler
+scheduler_noam = Hyperparams(
+    scheduler_name="noam",
+    d_model=None,  # Will be set from encoder.d_model
+    warmup_steps=10000,
+    min_lr=1e-6,
+)
 
-register_hparams("scheduler_cosine", {
-    "optim": {
-        "sched": {
-            "name": "cosine",
-            "warmup_steps": 1000,
-        }
-    }
-})
+HPARAMS_REGISTRY["scheduler_noam"] = scheduler_noam
 
-register_hparams("scheduler_constant", {
-    "optim": {
-        "sched": {
-            "name": "constant",
-        }
-    }
-})
+# Cosine Annealing Scheduler
+scheduler_cosine = Hyperparams(
+    scheduler_name="cosine",
+    warmup_steps=1000,
+    max_steps=100000,
+)
 
-# ============================================================================
-# Combined Presets (Full model configs)
-# ============================================================================
+HPARAMS_REGISTRY["scheduler_cosine"] = scheduler_cosine
 
-def _merge_dicts(*dicts):
-    """Recursively merge multiple dicts."""
-    result = {}
-    for d in dicts:
-        for k, v in d.items():
-            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-                result[k] = _merge_dicts(result[k], v)
-            else:
-                result[k] = v
-    return result
+# Constant Scheduler (no decay)
+scheduler_constant = Hyperparams(
+    scheduler_name="constant",
+)
 
-
-# SSL Small (14M)
-register_hparams("ssl_small", _merge_dicts(
-    HPARAMS_REGISTRY["defaults"],
-    HPARAMS_REGISTRY["preprocessor_default"],
-    HPARAMS_REGISTRY["encoder_small"],
-    HPARAMS_REGISTRY["masking_default"],
-    HPARAMS_REGISTRY["decoder_default"],
-    HPARAMS_REGISTRY["loss_default"],
-    HPARAMS_REGISTRY["optimizer_adamw"],
-    HPARAMS_REGISTRY["scheduler_noam"],
-))
-
-# SSL Medium (32M)
-register_hparams("ssl_medium", _merge_dicts(
-    HPARAMS_REGISTRY["defaults"],
-    HPARAMS_REGISTRY["preprocessor_default"],
-    HPARAMS_REGISTRY["encoder_medium"],
-    HPARAMS_REGISTRY["masking_default"],
-    HPARAMS_REGISTRY["decoder_default"],
-    HPARAMS_REGISTRY["loss_default"],
-    HPARAMS_REGISTRY["optimizer_adamw"],
-    HPARAMS_REGISTRY["scheduler_noam"],
-))
-
-# SSL Large (120M) - Default
-register_hparams("ssl_large", _merge_dicts(
-    HPARAMS_REGISTRY["defaults"],
-    HPARAMS_REGISTRY["preprocessor_default"],
-    HPARAMS_REGISTRY["encoder_large"],
-    HPARAMS_REGISTRY["masking_default"],
-    HPARAMS_REGISTRY["decoder_default"],
-    HPARAMS_REGISTRY["loss_default"],
-    HPARAMS_REGISTRY["optimizer_adamw"],
-    HPARAMS_REGISTRY["scheduler_noam"],
-))
-
-# SSL XLarge (616M)
-register_hparams("ssl_xlarge", _merge_dicts(
-    HPARAMS_REGISTRY["defaults"],
-    HPARAMS_REGISTRY["preprocessor_default"],
-    HPARAMS_REGISTRY["encoder_xlarge"],
-    HPARAMS_REGISTRY["masking_default"],
-    HPARAMS_REGISTRY["decoder_default"],
-    HPARAMS_REGISTRY["loss_default"],
-    HPARAMS_REGISTRY["optimizer_adamw"],
-    HPARAMS_REGISTRY["scheduler_noam"],
-))
-
-# SSL XXLarge (1.2B)
-register_hparams("ssl_xxlarge", _merge_dicts(
-    HPARAMS_REGISTRY["defaults"],
-    HPARAMS_REGISTRY["preprocessor_default"],
-    HPARAMS_REGISTRY["encoder_xxlarge"],
-    HPARAMS_REGISTRY["masking_default"],
-    HPARAMS_REGISTRY["decoder_default"],
-    HPARAMS_REGISTRY["loss_default"],
-    HPARAMS_REGISTRY["optimizer_adamw"],
-    HPARAMS_REGISTRY["scheduler_noam"],
-))
-
+HPARAMS_REGISTRY["scheduler_constant"] = scheduler_constant
 
 # ============================================================================
 # Utility Functions
 # ============================================================================
-
-def list_registered() -> list:
-    """List all registered hyperparameter sets."""
-    return list(HPARAMS_REGISTRY.keys())
-
 
 def get_config(name: str, overrides: dict = None) -> Hyperparams:
     """
     Get a registered config with optional overrides.
     
     Args:
-        name: Name of registered config (e.g., "ssl_large")
+        name: Name of registered config (e.g., "ssl_model_large")
         overrides: Optional dict of overrides
     
     Returns:
         Hyperparams config
     
     Example:
-        cfg = get_config("ssl_large", {"encoder": {"dropout": 0.2}})
+        cfg = get_config("ssl_model_large", {"Optimizer": {"lr": 5e-5}})
     """
     if name not in HPARAMS_REGISTRY:
-        available = list_registered()
+        available = list(HPARAMS_REGISTRY.keys())
         raise ValueError(f"Unknown config '{name}'. Available: {available}")
     
     return setup_hparams(HPARAMS_REGISTRY[name], overrides or {})
+
+
+def list_registered() -> list:
+    """List all registered hyperparameter sets."""
+    return list(HPARAMS_REGISTRY.keys())
 
 
 def print_config(cfg: Hyperparams, indent: int = 0):
@@ -423,31 +552,3 @@ def print_config(cfg: Hyperparams, indent: int = 0):
             print_config(v, indent + 1)
         else:
             print(f"{prefix}{k}: {v}")
-
-
-# ============================================================================
-# Example Usage
-# ============================================================================
-
-if __name__ == "__main__":
-    print("Available configs:")
-    for name in list_registered():
-        print(f"  - {name}")
-    
-    print("\n" + "=" * 60)
-    print("ssl_large config:")
-    print("=" * 60)
-    cfg = get_config("ssl_large")
-    print_config(cfg)
-    
-    print("\n" + "=" * 60)
-    print("With overrides:")
-    print("=" * 60)
-    cfg = get_config("ssl_large", {
-        "encoder": {"dropout": 0.2, "n_layers": 24},
-        "optim": {"lr": 5e-5},
-    })
-    print(f"cfg.encoder.dropout = {cfg.encoder.dropout}")
-    print(f"cfg.encoder.n_layers = {cfg.encoder.n_layers}")
-    print(f"cfg.optim.lr = {cfg.optim.lr}")
-
