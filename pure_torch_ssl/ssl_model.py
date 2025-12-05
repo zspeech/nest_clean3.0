@@ -281,27 +281,6 @@ class PureTorchSSLModel(nn.Module):
         model.load_state_dict(checkpoint['model_state_dict'])
         return model
     
-    def _extract_batch(self, batch) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Extract audio data from various batch formats.
-        
-        Supports:
-            - Object with .audio, .audio_len, .noisy_audio, .noisy_audio_len
-            - Tuple: (audio, audio_len, noise, noise_len, noisy_audio, noisy_audio_len)
-            - Dict with keys: 'audio', 'audio_len', 'noisy_audio', 'noisy_audio_len'
-        
-        Returns:
-            (audio, audio_len, noisy_audio, noisy_audio_len)
-        """
-        if hasattr(batch, 'audio'):
-            return batch.audio, batch.audio_len, batch.noisy_audio, batch.noisy_audio_len
-        elif isinstance(batch, (tuple, list)) and len(batch) >= 6:
-            return batch[0], batch[1], batch[4], batch[5]
-        elif isinstance(batch, dict):
-            return batch['audio'], batch['audio_len'], batch['noisy_audio'], batch['noisy_audio_len']
-        else:
-            raise ValueError(f"Unsupported batch format: {type(batch)}")
-    
     def forward(
         self,
         audio: torch.Tensor,
@@ -311,7 +290,7 @@ class PureTorchSSLModel(nn.Module):
         apply_mask: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass for training/inference.
+        Forward pass.
         
         Args:
             audio: Clean audio waveform [B, T]
@@ -322,11 +301,22 @@ class PureTorchSSLModel(nn.Module):
         
         Returns:
             Dict containing:
+                - loss: Computed MLM loss
                 - log_probs: Log probabilities from decoder [B, T, C, H]
                 - encoded_len: Encoded sequence lengths [B]
                 - masks: Applied masks [B, D, T]
                 - tokens: Quantized target tokens [B, T, H]
-                - loss: Computed loss (if apply_mask=True)
+        
+        Usage:
+            # Training
+            outputs = model(audio, audio_len, noisy_audio, noisy_audio_len)
+            outputs['loss'].backward()
+            optimizer.step()
+            
+            # Validation (no grad)
+            with torch.no_grad():
+                outputs = model(audio, audio_len, noisy_audio, noisy_audio_len)
+                val_loss = outputs['loss'].item()
         """
         # 1. Preprocess clean audio -> mel spectrogram for targets
         processed_clean, _ = self.preprocessor(input_signal=audio, length=audio_len)
@@ -378,103 +368,6 @@ class PureTorchSSLModel(nn.Module):
             'encoded_len': encoded_len,
             'masks': masks,
             'tokens': tokens,
-        }
-    
-    def training_step(self, batch) -> Dict[str, torch.Tensor]:
-        """
-        Single training step. Call backward() on loss after this.
-        
-        Args:
-            batch: Batch data (see _extract_batch for formats)
-        
-        Returns:
-            Dict with 'loss' and other outputs
-        """
-        audio, audio_len, noisy_audio, noisy_audio_len = self._extract_batch(batch)
-        return self.forward(audio, audio_len, noisy_audio, noisy_audio_len, apply_mask=True)
-    
-    def train_one_step(
-        self, 
-        batch, 
-        optimizer: torch.optim.Optimizer,
-        scheduler=None,
-        grad_clip: float = None,
-    ) -> Dict[str, Any]:
-        """
-        Complete training step with optimizer update.
-        
-        Args:
-            batch: Batch data
-            optimizer: Optimizer instance
-            scheduler: Optional LR scheduler
-            grad_clip: Optional gradient clipping value
-        
-        Returns:
-            Dict with 'loss', 'lr', and other metrics
-        """
-        optimizer.zero_grad()
-        
-        outputs = self.training_step(batch)
-        loss = outputs['loss']
-        
-        loss.backward()
-        
-        # Gradient clipping
-        if grad_clip is not None and grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
-        
-        optimizer.step()
-        
-        if scheduler is not None:
-            scheduler.step()
-        
-        return {
-            'loss': loss.item(),
-            'lr': optimizer.param_groups[0]['lr'],
-        }
-    
-    @torch.no_grad()
-    def validation_step(self, batch) -> Dict[str, Any]:
-        """
-        Single validation step (no gradients).
-        
-        Returns:
-            Dict with 'loss' and metrics
-        """
-        audio, audio_len, noisy_audio, noisy_audio_len = self._extract_batch(batch)
-        outputs = self.forward(audio, audio_len, noisy_audio, noisy_audio_len, apply_mask=True)
-        
-        return {
-            'loss': outputs['loss'].item(),
-            'batch_size': audio.size(0),
-        }
-    
-    @torch.no_grad()
-    def validate_epoch(self, dataloader) -> Dict[str, float]:
-        """
-        Run validation on entire dataloader.
-        
-        Args:
-            dataloader: Validation data loader
-        
-        Returns:
-            Dict with averaged metrics
-        """
-        self.eval()
-        
-        total_loss = 0.0
-        total_samples = 0
-        
-        for batch in dataloader:
-            result = self.validation_step(batch)
-            total_loss += result['loss'] * result['batch_size']
-            total_samples += result['batch_size']
-        
-        self.train()
-        
-        return {
-            'val_loss': total_loss / max(total_samples, 1),
-            'val_samples': total_samples,
         }
     
     def save_checkpoint(self, path: str, optimizer=None, epoch: int = 0, step: int = 0):

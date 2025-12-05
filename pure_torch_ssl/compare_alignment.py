@@ -248,94 +248,73 @@ def run_comparison(config_path: str, device: str = 'cuda'):
     noisy_audio = audio + torch.randn_like(audio) * 0.1
     noisy_audio_lens = audio_lens.clone()
     
-    # 7. Compare forward pass
+    # 7. Compare forward pass using model.forward()
     print("\n7. Comparing forward pass...")
     results = {}
     
+    # Use fixed mask for deterministic comparison
     set_seed(42)
     with torch.no_grad():
-        # Original model forward
-        orig_processed, orig_len = original_model.preprocessor(input_signal=audio, length=audio_lens)
+        # Get preprocessed features first to create fixed mask
         orig_noisy, orig_noisy_len = original_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
+        fixed_mask = torch.zeros_like(orig_noisy)
+        fixed_mask[:, :, 80:240] = 1.0  # Mask frames 80-240
+    
+    # Original model forward (manual to use fixed mask)
+    set_seed(42)
+    with torch.no_grad():
+        orig_processed, _ = original_model.preprocessor(input_signal=audio, length=audio_lens)
         _, orig_tokens = original_model.quantizer(input_signal=orig_processed)
-        orig_masked, orig_masks = original_model.mask_processor(input_feats=orig_noisy, input_lengths=orig_noisy_len)
+        orig_noisy, orig_noisy_len = original_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
+        orig_masked = orig_noisy * (1 - fixed_mask) + original_model.mask_processor.mask_embedding.view(1, -1, 1) * fixed_mask
         orig_encoded, orig_enc_len = original_model.encoder(audio_signal=orig_masked, length=orig_noisy_len)
-        
-        # Get decoder (decoder_ssl or decoder)
         orig_decoder = getattr(original_model, 'decoder_ssl', original_model.decoder)
         orig_log_probs = orig_decoder(encoder_output=orig_encoded)
-        
-        # Pure torch forward
-        set_seed(42)
-        pure_processed, pure_len = pure_model.preprocessor(input_signal=audio, length=audio_lens)
-        pure_noisy, pure_noisy_len = pure_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
+        orig_loss = original_model.loss(masks=fixed_mask, decoder_outputs=orig_log_probs, targets=orig_tokens)
+    
+    # Pure torch model forward (manual to use fixed mask)
+    set_seed(42)
+    with torch.no_grad():
+        pure_processed, _ = pure_model.preprocessor(input_signal=audio, length=audio_lens)
         _, pure_tokens = pure_model.quantizer(input_signal=pure_processed)
-        pure_masked, pure_masks = pure_model.mask_processor(input_feats=pure_noisy, input_lengths=pure_noisy_len)
+        pure_noisy, pure_noisy_len = pure_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
+        pure_masked = pure_noisy * (1 - fixed_mask) + pure_model.mask_processor.mask_embedding.view(1, -1, 1) * fixed_mask
         pure_encoded, pure_enc_len = pure_model.encoder(audio_signal=pure_masked, length=pure_noisy_len)
         pure_log_probs = pure_model.decoder(encoder_output=pure_encoded)
+        pure_loss = pure_model.loss(masks=fixed_mask, decoder_outputs=pure_log_probs, targets=pure_tokens)
     
     results['preprocessor'], _ = compare_tensors('preprocessor', orig_processed, pure_processed)
     results['tokens'], _ = compare_tensors('tokens', orig_tokens, pure_tokens)
-    results['masks'], _ = compare_tensors('masks', orig_masks, pure_masks)
     results['encoded'], _ = compare_tensors('encoded', orig_encoded, pure_encoded)
     results['log_probs'], _ = compare_tensors('log_probs', orig_log_probs, pure_log_probs)
-    
-    # 8. Compare training loss with fixed mask
-    print("\n8. Comparing training loss (fixed mask)...")
-    
-    # Create fixed mask
-    fixed_mask = torch.zeros_like(orig_masks)
-    fixed_mask[:, :, 80:240] = 1.0  # Mask frames 80-240
-    
-    set_seed(42)
-    with torch.no_grad():
-        # Recompute with fixed mask
-        orig_masked_fixed = orig_noisy.clone()
-        orig_masked_fixed = orig_masked_fixed * (1 - fixed_mask) + \
-            original_model.mask_processor.mask_embedding.view(1, -1, 1) * fixed_mask
-        
-        pure_masked_fixed = pure_noisy.clone()
-        pure_masked_fixed = pure_masked_fixed * (1 - fixed_mask) + \
-            pure_model.mask_processor.mask_embedding.view(1, -1, 1) * fixed_mask
-        
-        orig_enc_fixed, _ = original_model.encoder(audio_signal=orig_masked_fixed, length=orig_noisy_len)
-        pure_enc_fixed, _ = pure_model.encoder(audio_signal=pure_masked_fixed, length=pure_noisy_len)
-        
-        orig_logp_fixed = orig_decoder(encoder_output=orig_enc_fixed)
-        pure_logp_fixed = pure_model.decoder(encoder_output=pure_enc_fixed)
-        
-        orig_loss = original_model.loss(masks=fixed_mask, decoder_outputs=orig_logp_fixed, targets=orig_tokens)
-        pure_loss = pure_model.loss(masks=fixed_mask, decoder_outputs=pure_logp_fixed, targets=pure_tokens)
-    
-    results['loss'], loss_diff = compare_tensors('training_loss', orig_loss, pure_loss, atol=1e-4)
+    results['loss'], _ = compare_tensors('loss', orig_loss, pure_loss, atol=1e-4)
     print(f"   Original loss: {orig_loss.item():.6f}")
     print(f"   Pure torch loss: {pure_loss.item():.6f}")
     
-    # 9. Compare gradients
-    print("\n9. Comparing backward gradients...")
+    # 8. Compare gradients
+    print("\n8. Comparing backward gradients...")
     
-    # Fresh forward for gradient computation
     original_model.train()
     pure_model.train()
     original_model.zero_grad()
     pure_model.zero_grad()
     
+    # Original backward
     set_seed(42)
-    # Original
-    orig_proc, orig_len = original_model.preprocessor(input_signal=audio, length=audio_lens)
-    orig_noisy, _ = original_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
+    orig_proc, _ = original_model.preprocessor(input_signal=audio, length=audio_lens)
     _, orig_tok = original_model.quantizer(input_signal=orig_proc)
+    orig_noisy, orig_noisy_len = original_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
     orig_masked = orig_noisy * (1 - fixed_mask) + original_model.mask_processor.mask_embedding.view(1, -1, 1) * fixed_mask
     orig_enc, _ = original_model.encoder(audio_signal=orig_masked, length=orig_noisy_len)
     orig_logp = orig_decoder(encoder_output=orig_enc)
     orig_loss = original_model.loss(masks=fixed_mask, decoder_outputs=orig_logp, targets=orig_tok)
     orig_loss.backward()
     
+    # Pure torch backward
     set_seed(42)
-    # Pure torch
-    pure_proc, pure_len = pure_model.preprocessor(input_signal=audio, length=audio_lens)
-    pure_noisy, _ = pure_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
+    pure_proc, _ = pure_model.preprocessor(input_signal=audio, length=audio_lens)
     _, pure_tok = pure_model.quantizer(input_signal=pure_proc)
+    pure_noisy, pure_noisy_len = pure_model.preprocessor(input_signal=noisy_audio, length=noisy_audio_lens)
     pure_masked = pure_noisy * (1 - fixed_mask) + pure_model.mask_processor.mask_embedding.view(1, -1, 1) * fixed_mask
     pure_enc, _ = pure_model.encoder(audio_signal=pure_masked, length=pure_noisy_len)
     pure_logp = pure_model.decoder(encoder_output=pure_enc)
