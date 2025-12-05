@@ -5,15 +5,8 @@
 # Usage:
 #     from hparams import setup_hparams, HPARAMS_REGISTRY
 #     
-#     # Use predefined config
 #     cfg = setup_hparams(HPARAMS_REGISTRY["defaults"], {})
-#     
-#     # Combine multiple configs
-#     cfg = setup_hparams({
-#         **HPARAMS_REGISTRY["defaults"],
-#         **HPARAMS_REGISTRY["ssl_model"],
-#         **HPARAMS_REGISTRY["Optimizer"],
-#     }, {"Optimizer": {"lr": 1e-4}})
+#     print(cfg.model.encoder.d_model)  # Access via cfg.model.encoder.d_model
 
 import os.path as osp
 
@@ -102,7 +95,7 @@ def setup_hparams(hparam_set_names, kwargs):
 # Default Configurations
 # ============================================================================
 
-# Base defaults (from user's example + SSL model config)
+# Base defaults
 defaults = Hyperparams(
     project="ssl_nest",
     train=True,
@@ -131,56 +124,6 @@ defaults = Hyperparams(
     log_steps=100,
     save=True,
     save_iters=10000,
-    # SSL Model config (120M - Default)
-    sample_rate=16000,
-    num_classes=8192,
-    num_books=1,
-    code_dim=16,
-    squeeze_single=False,
-    mask_position="pre_conv",
-    
-    preprocessor=Hyperparams(
-        features=80,
-        window_size=0.025,
-        window_stride=0.01,
-        n_fft=512,
-        normalize="per_feature",
-        log=True,
-        dither=0.0,
-        pad_to=16,
-    ),
-    
-    encoder=Hyperparams(
-        n_layers=17,
-        d_model=512,
-        n_heads=8,
-        subsampling="dw_striding",
-        subsampling_factor=8,
-        subsampling_conv_channels=256,
-        ff_expansion_factor=4,
-        conv_kernel_size=9,
-        dropout=0.1,
-        dropout_pre_encoder=0.1,
-        dropout_emb=0.0,
-        dropout_att=0.1,
-        use_bias=True,
-        xscaling=True,
-    ),
-    
-    masking=Hyperparams(
-        block_size=40,
-        mask_prob=0.01,
-        freeze=True,
-        allow_overlap=True,
-    ),
-    
-    decoder=Hyperparams(
-        use_bias=True,
-    ),
-    
-    loss=Hyperparams(
-        mask_threshold=0.8,
-    ),
 )
 
 HPARAMS_REGISTRY["defaults"] = defaults
@@ -255,13 +198,71 @@ Optimizer = Hyperparams(
 HPARAMS_REGISTRY["Optimizer"] = Optimizer
 
 # ============================================================================
+# Model Configuration (SSL Model - 120M)
+# ============================================================================
+
+model = Hyperparams(
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=17,
+        d_model=512,
+        n_heads=8,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=9,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=True,
+        xscaling=True,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=True,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
+)
+
+HPARAMS_REGISTRY["model"] = model
+
+# ============================================================================
 # Scheduler Configurations
 # ============================================================================
 
 # Noam Annealing Scheduler
 scheduler_noam = Hyperparams(
     scheduler_name="noam",
-    d_model=None,  # Will be set from encoder.d_model
+    d_model=None,  # Will be set from model.encoder.d_model
     warmup_steps=10000,
     min_lr=1e-6,
 )
@@ -301,6 +302,7 @@ def get_config(name: str, overrides: dict = None) -> Hyperparams:
     
     Example:
         cfg = get_config("defaults", {"Optimizer": {"lr": 5e-5}})
+        # Access: cfg.model.encoder.d_model
     """
     if name not in HPARAMS_REGISTRY:
         available = list(HPARAMS_REGISTRY.keys())

@@ -113,87 +113,96 @@ class PureTorchSSLModel(nn.Module):
                         if subkey not in cfg[key]:
                             cfg[key][subkey] = defaults[key][subkey]
         
+        # Ensure model config exists
+        if 'model' not in cfg:
+            if 'model' in HPARAMS_REGISTRY:
+                cfg['model'] = setup_hparams(HPARAMS_REGISTRY['model'], {})
+            else:
+                raise ValueError("'model' config not found. Please provide model configuration.")
+        
+        model_cfg = cfg.model
+        
         # Preprocessor
         print("Initializing preprocessor...")
         self.preprocessor = AudioToMelSpectrogramPreprocessor(
-            sample_rate=cfg.sample_rate,
-            normalize=cfg.preprocessor.normalize,
-            window_size=cfg.preprocessor.window_size,
-            window_stride=cfg.preprocessor.window_stride,
-            features=cfg.preprocessor.features,
-            n_fft=cfg.preprocessor.n_fft,
-            log=cfg.preprocessor.get('log', True),
+            sample_rate=model_cfg.sample_rate,
+            normalize=model_cfg.preprocessor.normalize,
+            window_size=model_cfg.preprocessor.window_size,
+            window_stride=model_cfg.preprocessor.window_stride,
+            features=model_cfg.preprocessor.features,
+            n_fft=model_cfg.preprocessor.n_fft,
+            log=model_cfg.preprocessor.get('log', True),
             frame_splicing=1,
-            dither=cfg.preprocessor.get('dither', 0.0),
-            pad_to=cfg.preprocessor.get('pad_to', 16),
+            dither=model_cfg.preprocessor.get('dither', 0.0),
+            pad_to=model_cfg.preprocessor.get('pad_to', 16),
             pad_value=0.0,
         )
         
         # Quantizer
         print("Initializing quantizer...")
         self.quantizer = RandomProjectionVectorQuantizer(
-            feat_in=cfg.preprocessor.features,
-            code_dim=cfg.code_dim,
-            num_books=cfg.num_books,
-            num_classes=cfg.num_classes,
+            feat_in=model_cfg.preprocessor.features,
+            code_dim=model_cfg.code_dim,
+            num_books=model_cfg.num_books,
+            num_classes=model_cfg.num_classes,
             dist_fn="l2",
             freeze=True,
-            squeeze_single=cfg.squeeze_single,
-            combine_time_steps=cfg.encoder.subsampling_factor,
+            squeeze_single=model_cfg.squeeze_single,
+            combine_time_steps=model_cfg.encoder.subsampling_factor,
         )
         
         # Mask processor
         print("Initializing mask_processor...")
         self.mask_processor = RandomBlockMasking(
-            block_size=cfg.masking.block_size,
-            mask_prob=cfg.masking.mask_prob,
-            feat_in=cfg.preprocessor.features,
-            freeze=cfg.masking.get('freeze', True),
-            allow_overlap=cfg.masking.get('allow_overlap', True),
+            block_size=model_cfg.masking.block_size,
+            mask_prob=model_cfg.masking.mask_prob,
+            feat_in=model_cfg.preprocessor.features,
+            freeze=model_cfg.masking.get('freeze', True),
+            allow_overlap=model_cfg.masking.get('allow_overlap', True),
         )
         
         # Encoder
         print("Initializing encoder...")
         self.encoder = ConformerEncoder(
-            feat_in=cfg.preprocessor.features,
+            feat_in=model_cfg.preprocessor.features,
             feat_out=-1,
-            n_layers=cfg.encoder.n_layers,
-            d_model=cfg.encoder.d_model,
-            subsampling=cfg.encoder.subsampling,
-            subsampling_factor=cfg.encoder.subsampling_factor,
-            subsampling_conv_channels=cfg.encoder.subsampling_conv_channels,
-            ff_expansion_factor=cfg.encoder.ff_expansion_factor,
+            n_layers=model_cfg.encoder.n_layers,
+            d_model=model_cfg.encoder.d_model,
+            subsampling=model_cfg.encoder.subsampling,
+            subsampling_factor=model_cfg.encoder.subsampling_factor,
+            subsampling_conv_channels=model_cfg.encoder.subsampling_conv_channels,
+            ff_expansion_factor=model_cfg.encoder.ff_expansion_factor,
             self_attention_model="rel_pos",
-            n_heads=cfg.encoder.n_heads,
-            conv_kernel_size=cfg.encoder.conv_kernel_size,
-            dropout=cfg.encoder.dropout,
-            dropout_pre_encoder=cfg.encoder.get('dropout_pre_encoder', cfg.encoder.dropout),
-            dropout_emb=cfg.encoder.get('dropout_emb', 0.0),
-            dropout_att=cfg.encoder.get('dropout_att', cfg.encoder.dropout),
+            n_heads=model_cfg.encoder.n_heads,
+            conv_kernel_size=model_cfg.encoder.conv_kernel_size,
+            dropout=model_cfg.encoder.dropout,
+            dropout_pre_encoder=model_cfg.encoder.get('dropout_pre_encoder', model_cfg.encoder.dropout),
+            dropout_emb=model_cfg.encoder.get('dropout_emb', 0.0),
+            dropout_att=model_cfg.encoder.get('dropout_att', model_cfg.encoder.dropout),
         )
         
         # Decoder
         print("Initializing decoder...")
         self.decoder = MultiSoftmaxDecoder(
-            feat_in=cfg.encoder.d_model,
-            num_classes=cfg.num_classes,
-            num_decoders=cfg.num_books,
-            squeeze_single=cfg.squeeze_single,
-            use_bias=cfg.decoder.get('use_bias', True),
+            feat_in=model_cfg.encoder.d_model,
+            num_classes=model_cfg.num_classes,
+            num_decoders=model_cfg.num_books,
+            squeeze_single=model_cfg.squeeze_single,
+            use_bias=model_cfg.decoder.get('use_bias', True),
         )
         
         # Loss
         print("Initializing loss...")
         self.loss = MultiMLMLoss(
-            combine_time_steps=cfg.encoder.subsampling_factor,
-            mask_threshold=cfg.loss.mask_threshold,
-            num_decoders=cfg.num_books,
-            squeeze_single=cfg.squeeze_single,
+            combine_time_steps=model_cfg.encoder.subsampling_factor,
+            mask_threshold=model_cfg.loss.mask_threshold,
+            num_decoders=model_cfg.num_books,
+            squeeze_single=model_cfg.squeeze_single,
         )
         
         # Handle post-conv masking wrapper
         self.pre_encoder = None
-        if cfg.get('mask_position', 'pre_conv') == "post_conv":
+        if model_cfg.get('mask_position', 'pre_conv') == "post_conv":
             print("Setting up post-conv masking wrapper...")
             self.pre_encoder = ConvFeatureMaksingWrapper(self.encoder.pre_encode, self.mask_processor)
             self.encoder.pre_encode = self.pre_encoder
@@ -414,7 +423,10 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: Hyperparams, num_tra
         # Use Noam by default if lr_warmup is set
         if optim_cfg.get('lr_warmup', 0) > 0:
             warmup_steps = int(optim_cfg.get('lr_warmup', 10000))
-            d_model = int(cfg.get('encoder', Hyperparams()).get('d_model', 512))
+            # Get d_model from cfg.model.encoder.d_model
+            model_cfg = cfg.get('model', Hyperparams())
+            encoder_cfg = model_cfg.get('encoder', Hyperparams()) if isinstance(model_cfg, Hyperparams) else Hyperparams()
+            d_model = int(encoder_cfg.get('d_model', 512))
             min_lr = float(optim_cfg.get('lr_min_scale', 0.0)) * float(optim_cfg.get('lr', 1e-4))
             if min_lr == 0:
                 min_lr = 1e-6
@@ -431,7 +443,10 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: Hyperparams, num_tra
     sched_name = str(sched_cfg.get('scheduler_name', 'noam')).lower()
     
     if sched_name in ('noamannealing', 'noam'):
-        d_model = int(sched_cfg.get('d_model', cfg.encoder.d_model))
+        # Get d_model from cfg.model.encoder.d_model or scheduler config
+        model_cfg = cfg.get('model', Hyperparams())
+        encoder_cfg = model_cfg.get('encoder', Hyperparams()) if isinstance(model_cfg, Hyperparams) else Hyperparams()
+        d_model = int(sched_cfg.get('d_model', encoder_cfg.get('d_model', 512)))
         warmup_steps = int(sched_cfg.get('warmup_steps', optim_cfg.get('lr_warmup', 10000)))
         min_lr = float(sched_cfg.get('min_lr', 1e-6))
         
