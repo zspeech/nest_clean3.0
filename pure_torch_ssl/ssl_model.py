@@ -15,33 +15,20 @@
 """
 Pure PyTorch SSL Model - Standalone implementation.
 
-No PyTorch Lightning, no NeMo, no OmegaConf dependencies.
-Only requires: torch, numpy, yaml, librosa (for audio preprocessing)
-
 Usage:
-    from ssl_model import PureTorchSSLModel
+    from ssl_model import PureTorchSSLModel, setup_hparams
     
-    # From config file
+    # From config
+    cfg = setup_hparams(your_config_dict, {})
+    model = PureTorchSSLModel(cfg)
+    
+    # Or from YAML file
     model = PureTorchSSLModel.from_config_file("config.yaml")
-    
-    # Or with explicit parameters
-    model = PureTorchSSLModel(
-        sample_rate=16000,
-        features=80,
-        n_layers=17,
-        d_model=512,
-        ...
-    )
     
     # Training
     model.to('cuda')
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-    
-    for batch in dataloader:
-        loss = model.training_step(batch)
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+    outputs = model(audio, audio_len, noisy_audio, noisy_audio_len)
+    outputs['loss'].backward()
 """
 
 from typing import Optional, Tuple, Dict, Any
@@ -58,10 +45,55 @@ from modules.ssl_modules.quantizers import RandomProjectionVectorQuantizer
 from modules.ssl_modules.multi_softmax_decoder import MultiSoftmaxDecoder
 from losses.ssl_losses.mlm import MultiMLMLoss
 
-__all__ = ['PureTorchSSLModel', 'create_optimizer', 'create_scheduler']
+__all__ = ['PureTorchSSLModel', 'Hyperparams', 'setup_hparams', 'create_optimizer', 'create_scheduler']
 
 
-def _load_yaml_config(config_path: str) -> dict:
+# ============================================================================
+# Hyperparams Configuration System
+# ============================================================================
+
+class Hyperparams(dict):
+    """Dict subclass that allows attribute-style access (cfg.key)."""
+    
+    def __getattr__(self, attr):
+        try:
+            return self[attr]
+        except KeyError:
+            raise AttributeError(f"'Hyperparams' object has no attribute '{attr}'")
+    
+    def __setattr__(self, attr, value):
+        self[attr] = value
+    
+    def __repr__(self):
+        return f"Hyperparams({dict.__repr__(self)})"
+
+
+def setup_hparams(config: dict, overrides: dict = None) -> Hyperparams:
+    """
+    Convert a nested dict config into Hyperparams with attribute access.
+    
+    Args:
+        config: Dict config (can be nested)
+        overrides: Optional dict of overrides
+    
+    Returns:
+        Hyperparams object with cfg.key.subkey access
+    """
+    H = Hyperparams()
+    
+    for k, v in config.items():
+        if isinstance(v, dict):
+            H[k] = setup_hparams(v, {})
+        else:
+            H[k] = v
+    
+    if overrides:
+        H.update(overrides)
+    
+    return H
+
+
+def _load_yaml_config(config_path: str) -> Hyperparams:
     """Load YAML config and resolve ${...} interpolations."""
     with open(config_path, 'r') as f:
         cfg = yaml.safe_load(f)
@@ -83,19 +115,77 @@ def _load_yaml_config(config_path: str) -> dict:
             return val
         return obj
     
-    return resolve_interpolations(cfg, cfg)
+    resolved = resolve_interpolations(cfg, cfg)
+    return setup_hparams(resolved, {})
 
 
-def _get_nested(cfg: dict, *keys, default=None):
-    """Safely get nested dict value."""
-    val = cfg
-    for k in keys:
-        if isinstance(val, dict):
-            val = val.get(k, default)
-        else:
-            return default
-    return val if val is not None else default
+# ============================================================================
+# Default Configuration
+# ============================================================================
 
+def get_default_config() -> Hyperparams:
+    """Get default SSL model configuration."""
+    return setup_hparams({
+        'sample_rate': 16000,
+        'num_classes': 8192,
+        'num_books': 1,
+        'code_dim': 16,
+        'squeeze_single': False,
+        'mask_position': 'pre_conv',
+        
+        'preprocessor': {
+            'features': 80,
+            'window_size': 0.025,
+            'window_stride': 0.01,
+            'n_fft': 512,
+            'normalize': 'per_feature',
+            'log': True,
+            'dither': 0.0,
+            'pad_to': 16,
+        },
+        
+        'encoder': {
+            'n_layers': 17,
+            'd_model': 512,
+            'n_heads': 8,
+            'subsampling': 'dw_striding',
+            'subsampling_factor': 8,
+            'subsampling_conv_channels': 256,
+            'ff_expansion_factor': 4,
+            'conv_kernel_size': 9,
+            'dropout': 0.1,
+            'dropout_pre_encoder': 0.1,
+            'dropout_emb': 0.0,
+            'dropout_att': 0.1,
+        },
+        
+        'masking': {
+            'block_size': 40,
+            'mask_prob': 0.01,
+            'freeze': True,
+            'allow_overlap': True,
+        },
+        
+        'decoder': {
+            'use_bias': True,
+        },
+        
+        'loss': {
+            'mask_threshold': 0.8,
+        },
+        
+        'optim': {
+            'name': 'adamw',
+            'lr': 1e-4,
+            'betas': [0.9, 0.999],
+            'weight_decay': 0.0,
+        },
+    }, {})
+
+
+# ============================================================================
+# SSL Model
+# ============================================================================
 
 class PureTorchSSLModel(nn.Module):
     """
@@ -105,134 +195,112 @@ class PureTorchSSLModel(nn.Module):
     implemented in pure PyTorch without any framework dependencies.
     """
     
-    def __init__(
-        self,
-        # Preprocessor params
-        sample_rate: int = 16000,
-        features: int = 80,
-        window_size: float = 0.025,
-        window_stride: float = 0.01,
-        n_fft: int = 512,
-        normalize: str = "per_feature",
-        # Encoder params
-        n_layers: int = 17,
-        d_model: int = 512,
-        n_heads: int = 8,
-        subsampling: str = "dw_striding",
-        subsampling_factor: int = 8,
-        subsampling_conv_channels: int = 256,
-        ff_expansion_factor: int = 4,
-        conv_kernel_size: int = 9,
-        dropout: float = 0.1,
-        # Quantizer params
-        num_classes: int = 8192,
-        num_books: int = 1,
-        code_dim: int = 16,
-        squeeze_single: bool = False,
-        # Masking params
-        block_size: int = 40,
-        mask_prob: float = 0.01,
-        # Loss params
-        mask_threshold: float = 0.8,
-        # Mask position
-        mask_position: str = "pre_conv",
-    ):
-        super().__init__()
+    def __init__(self, cfg: Hyperparams):
+        """
+        Initialize SSL model from config.
         
-        # Save config for checkpointing
-        self._config = {
-            'sample_rate': sample_rate, 'features': features, 'window_size': window_size,
-            'window_stride': window_stride, 'n_fft': n_fft, 'normalize': normalize,
-            'n_layers': n_layers, 'd_model': d_model, 'n_heads': n_heads,
-            'subsampling': subsampling, 'subsampling_factor': subsampling_factor,
-            'subsampling_conv_channels': subsampling_conv_channels,
-            'ff_expansion_factor': ff_expansion_factor, 'conv_kernel_size': conv_kernel_size,
-            'dropout': dropout, 'num_classes': num_classes, 'num_books': num_books,
-            'code_dim': code_dim, 'squeeze_single': squeeze_single, 'block_size': block_size,
-            'mask_prob': mask_prob, 'mask_threshold': mask_threshold, 'mask_position': mask_position,
-        }
+        Args:
+            cfg: Hyperparams config with structure:
+                cfg.sample_rate
+                cfg.preprocessor.features
+                cfg.encoder.d_model
+                cfg.masking.block_size
+                ...
+        """
+        super().__init__()
+        self.cfg = cfg
+        
+        # Merge with defaults
+        defaults = get_default_config()
+        for key in defaults:
+            if key not in cfg:
+                cfg[key] = defaults[key]
+            elif isinstance(defaults[key], Hyperparams) and key in cfg:
+                for subkey in defaults[key]:
+                    if subkey not in cfg[key]:
+                        cfg[key][subkey] = defaults[key][subkey]
         
         # Preprocessor
         print("Initializing preprocessor...")
         self.preprocessor = AudioToMelSpectrogramPreprocessor(
-            sample_rate=sample_rate,
-            normalize=normalize,
-            window_size=window_size,
-            window_stride=window_stride,
-            features=features,
-            n_fft=n_fft,
-            log=True,
+            sample_rate=cfg.sample_rate,
+            normalize=cfg.preprocessor.normalize,
+            window_size=cfg.preprocessor.window_size,
+            window_stride=cfg.preprocessor.window_stride,
+            features=cfg.preprocessor.features,
+            n_fft=cfg.preprocessor.n_fft,
+            log=cfg.preprocessor.get('log', True),
             frame_splicing=1,
-            dither=0.0,
-            pad_to=16,
+            dither=cfg.preprocessor.get('dither', 0.0),
+            pad_to=cfg.preprocessor.get('pad_to', 16),
             pad_value=0.0,
         )
         
         # Quantizer
         print("Initializing quantizer...")
         self.quantizer = RandomProjectionVectorQuantizer(
-            feat_in=features,
-            code_dim=code_dim,
-            num_books=num_books,
-            num_classes=num_classes,
+            feat_in=cfg.preprocessor.features,
+            code_dim=cfg.code_dim,
+            num_books=cfg.num_books,
+            num_classes=cfg.num_classes,
             dist_fn="l2",
             freeze=True,
-            squeeze_single=squeeze_single,
-            combine_time_steps=subsampling_factor,
+            squeeze_single=cfg.squeeze_single,
+            combine_time_steps=cfg.encoder.subsampling_factor,
         )
         
         # Mask processor
         print("Initializing mask_processor...")
         self.mask_processor = RandomBlockMasking(
-            block_size=block_size,
-            mask_prob=mask_prob,
-            feat_in=features,
-            freeze=True,
-            allow_overlap=True,
+            block_size=cfg.masking.block_size,
+            mask_prob=cfg.masking.mask_prob,
+            feat_in=cfg.preprocessor.features,
+            freeze=cfg.masking.get('freeze', True),
+            allow_overlap=cfg.masking.get('allow_overlap', True),
         )
         
         # Encoder
         print("Initializing encoder...")
         self.encoder = ConformerEncoder(
-            feat_in=features,
+            feat_in=cfg.preprocessor.features,
             feat_out=-1,
-            n_layers=n_layers,
-            d_model=d_model,
-            subsampling=subsampling,
-            subsampling_factor=subsampling_factor,
-            subsampling_conv_channels=subsampling_conv_channels,
-            ff_expansion_factor=ff_expansion_factor,
+            n_layers=cfg.encoder.n_layers,
+            d_model=cfg.encoder.d_model,
+            subsampling=cfg.encoder.subsampling,
+            subsampling_factor=cfg.encoder.subsampling_factor,
+            subsampling_conv_channels=cfg.encoder.subsampling_conv_channels,
+            ff_expansion_factor=cfg.encoder.ff_expansion_factor,
             self_attention_model="rel_pos",
-            n_heads=n_heads,
-            conv_kernel_size=conv_kernel_size,
-            dropout=dropout,
-            dropout_pre_encoder=dropout,
-            dropout_emb=0.0,
-            dropout_att=dropout,
+            n_heads=cfg.encoder.n_heads,
+            conv_kernel_size=cfg.encoder.conv_kernel_size,
+            dropout=cfg.encoder.dropout,
+            dropout_pre_encoder=cfg.encoder.get('dropout_pre_encoder', cfg.encoder.dropout),
+            dropout_emb=cfg.encoder.get('dropout_emb', 0.0),
+            dropout_att=cfg.encoder.get('dropout_att', cfg.encoder.dropout),
         )
         
         # Decoder
         print("Initializing decoder...")
         self.decoder = MultiSoftmaxDecoder(
-            feat_in=d_model,
-            num_classes=num_classes,
-            num_decoders=num_books,
-            squeeze_single=squeeze_single,
-            use_bias=True,
+            feat_in=cfg.encoder.d_model,
+            num_classes=cfg.num_classes,
+            num_decoders=cfg.num_books,
+            squeeze_single=cfg.squeeze_single,
+            use_bias=cfg.decoder.get('use_bias', True),
         )
         
         # Loss
         print("Initializing loss...")
         self.loss = MultiMLMLoss(
-            combine_time_steps=subsampling_factor,
-            mask_threshold=mask_threshold,
-            num_decoders=num_books,
-            squeeze_single=squeeze_single,
+            combine_time_steps=cfg.encoder.subsampling_factor,
+            mask_threshold=cfg.loss.mask_threshold,
+            num_decoders=cfg.num_books,
+            squeeze_single=cfg.squeeze_single,
         )
         
         # Handle post-conv masking wrapper
         self.pre_encoder = None
-        if mask_position == "post_conv":
+        if cfg.get('mask_position', 'pre_conv') == "post_conv":
             print("Setting up post-conv masking wrapper...")
             self.pre_encoder = ConvFeatureMaksingWrapper(self.encoder.pre_encode, self.mask_processor)
             self.encoder.pre_encode = self.pre_encoder
@@ -244,40 +312,19 @@ class PureTorchSSLModel(nn.Module):
         """Create model from YAML config file."""
         print(f"Loading config from: {config_path}")
         cfg = _load_yaml_config(config_path)
-        model_cfg = cfg.get('model', cfg)
         
-        return cls(
-            sample_rate=model_cfg.get('sample_rate', 16000),
-            features=_get_nested(model_cfg, 'preprocessor', 'features', default=80),
-            window_size=_get_nested(model_cfg, 'preprocessor', 'window_size', default=0.025),
-            window_stride=_get_nested(model_cfg, 'preprocessor', 'window_stride', default=0.01),
-            n_fft=_get_nested(model_cfg, 'preprocessor', 'n_fft', default=512),
-            normalize=_get_nested(model_cfg, 'preprocessor', 'normalize', default='per_feature'),
-            n_layers=_get_nested(model_cfg, 'encoder', 'n_layers', default=17),
-            d_model=_get_nested(model_cfg, 'encoder', 'd_model', default=512),
-            n_heads=_get_nested(model_cfg, 'encoder', 'n_heads', default=8),
-            subsampling=_get_nested(model_cfg, 'encoder', 'subsampling', default='dw_striding'),
-            subsampling_factor=_get_nested(model_cfg, 'encoder', 'subsampling_factor', default=8),
-            subsampling_conv_channels=_get_nested(model_cfg, 'encoder', 'subsampling_conv_channels', default=256),
-            ff_expansion_factor=_get_nested(model_cfg, 'encoder', 'ff_expansion_factor', default=4),
-            conv_kernel_size=_get_nested(model_cfg, 'encoder', 'conv_kernel_size', default=9),
-            dropout=_get_nested(model_cfg, 'encoder', 'dropout', default=0.1),
-            num_classes=model_cfg.get('num_classes', 8192),
-            num_books=model_cfg.get('num_books', 1),
-            code_dim=model_cfg.get('code_dim', 16),
-            squeeze_single=model_cfg.get('squeeze_single', False),
-            block_size=_get_nested(model_cfg, 'masking', 'block_size', default=40),
-            mask_prob=_get_nested(model_cfg, 'masking', 'mask_prob', default=0.01),
-            mask_threshold=_get_nested(model_cfg, 'loss', 'mask_threshold', default=0.8),
-            mask_position=model_cfg.get('mask_position', 'pre_conv'),
-        )
+        # If config has 'model' key, use it
+        if 'model' in cfg:
+            cfg = cfg.model
+        
+        return cls(cfg)
     
     @classmethod
     def from_checkpoint(cls, checkpoint_path: str) -> 'PureTorchSSLModel':
         """Create model from checkpoint."""
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-        config = checkpoint['config']
-        model = cls(**config)
+        cfg = setup_hparams(checkpoint['config'], {})
+        model = cls(cfg)
         model.load_state_dict(checkpoint['model_state_dict'])
         return model
     
@@ -306,17 +353,6 @@ class PureTorchSSLModel(nn.Module):
                 - encoded_len: Encoded sequence lengths [B]
                 - masks: Applied masks [B, D, T]
                 - tokens: Quantized target tokens [B, T, H]
-        
-        Usage:
-            # Training
-            outputs = model(audio, audio_len, noisy_audio, noisy_audio_len)
-            outputs['loss'].backward()
-            optimizer.step()
-            
-            # Validation (no grad)
-            with torch.no_grad():
-                outputs = model(audio, audio_len, noisy_audio, noisy_audio_len)
-                val_loss = outputs['loss'].item()
         """
         # 1. Preprocess clean audio -> mel spectrogram for targets
         processed_clean, _ = self.preprocessor(input_signal=audio, length=audio_len)
@@ -372,9 +408,15 @@ class PureTorchSSLModel(nn.Module):
     
     def save_checkpoint(self, path: str, optimizer=None, epoch: int = 0, step: int = 0):
         """Save model checkpoint."""
+        # Convert Hyperparams back to dict for saving
+        def to_dict(obj):
+            if isinstance(obj, Hyperparams):
+                return {k: to_dict(v) for k, v in obj.items()}
+            return obj
+        
         checkpoint = {
             'model_state_dict': self.state_dict(),
-            'config': self._config,
+            'config': to_dict(self.cfg),
             'epoch': epoch,
             'step': step,
         }
@@ -399,15 +441,23 @@ class PureTorchSSLModel(nn.Module):
         }
 
 
-def create_optimizer(model: nn.Module, cfg: dict, lr: float = None) -> torch.optim.Optimizer:
-    """Create optimizer from config dict."""
-    model_cfg = cfg.get('model', cfg)
-    optim_cfg = model_cfg.get('optim', {})
+# ============================================================================
+# Optimizer & Scheduler
+# ============================================================================
+
+def create_optimizer(model: nn.Module, cfg: Hyperparams) -> torch.optim.Optimizer:
+    """
+    Create optimizer from config.
+    
+    Args:
+        model: Model to optimize
+        cfg: Config with cfg.optim.name, cfg.optim.lr, etc.
+    """
+    optim_cfg = cfg.get('optim', Hyperparams())
     optim_name = str(optim_cfg.get('name', 'adamw')).lower()
-    if lr is None:
-        lr = float(optim_cfg.get('lr', 1e-4))
-    betas = optim_cfg.get('betas', [0.9, 0.999])
+    lr = float(optim_cfg.get('lr', 1e-4))
     weight_decay = float(optim_cfg.get('weight_decay', 0.0))
+    betas = optim_cfg.get('betas', [0.9, 0.999])
     
     if isinstance(betas, list):
         betas = tuple(float(b) for b in betas)
@@ -417,15 +467,21 @@ def create_optimizer(model: nn.Module, cfg: dict, lr: float = None) -> torch.opt
     elif optim_name == 'adam':
         return torch.optim.Adam(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
     elif optim_name == 'sgd':
-        return torch.optim.SGD(model.parameters(), lr=lr, momentum=float(optim_cfg.get('momentum', 0.9)), weight_decay=weight_decay)
+        momentum = float(optim_cfg.get('momentum', 0.9))
+        return torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
     else:
         raise ValueError(f"Unknown optimizer: {optim_name}")
 
 
-def create_scheduler(optimizer: torch.optim.Optimizer, cfg: dict, num_training_steps: int = None):
-    """Create learning rate scheduler from config dict."""
-    model_cfg = cfg.get('model', cfg)
-    optim_cfg = model_cfg.get('optim', {})
+def create_scheduler(optimizer: torch.optim.Optimizer, cfg: Hyperparams, num_training_steps: int = None):
+    """
+    Create learning rate scheduler from config.
+    
+    Args:
+        optimizer: Optimizer instance
+        cfg: Config with cfg.optim.sched.name, etc.
+    """
+    optim_cfg = cfg.get('optim', Hyperparams())
     sched_cfg = optim_cfg.get('sched', None)
     
     if sched_cfg is None:
@@ -434,7 +490,7 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: dict, num_training_s
     sched_name = str(sched_cfg.get('name', 'noam')).lower()
     
     if sched_name in ('noamannealing', 'noam'):
-        d_model = int(sched_cfg.get('d_model', _get_nested(model_cfg, 'encoder', 'd_model', default=512)))
+        d_model = int(sched_cfg.get('d_model', cfg.encoder.d_model))
         warmup_steps = int(sched_cfg.get('warmup_steps', 10000))
         min_lr = float(sched_cfg.get('min_lr', 1e-6))
         
@@ -459,4 +515,3 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: dict, num_training_s
         return torch.optim.lr_scheduler.LambdaLR(optimizer, cosine_with_warmup)
     
     return None
-
