@@ -232,6 +232,13 @@ model = Hyperparams(
         use_torchaudio=False,
     ),
     
+    spec_augment=Hyperparams(
+        freq_masks=0,
+        time_masks=0,
+        freq_width=27,
+        time_width=0.05,
+    ),
+    
     encoder=Hyperparams(
         feat_in=80,
         n_layers=17,
@@ -248,7 +255,7 @@ model = Hyperparams(
         ff_expansion_factor=4,
         self_attention_model="rel_pos",
         n_heads=8,
-        att_context_size=None,
+        att_context_size=[-1, -1],  # From config.yaml: [-1, -1] means unlimited context
         att_context_probs=None,
         att_context_style="regular",
         xscaling=True,
@@ -268,7 +275,7 @@ model = Hyperparams(
         global_tokens=0,
         global_tokens_spacing=1,
         global_attn_separate=False,
-        sync_max_audio_length=True,
+        sync_max_audio_length=False,  # From config.yaml: false to prevent DDP deadlock
     ),
     
     masking=Hyperparams(
@@ -308,9 +315,152 @@ model = Hyperparams(
         squeeze_single=False,
         combine_time_steps=8,
     ),
+    
+    # Data loader configs (excluding paths)
+    train_ds=Hyperparams(
+        sample_rate=16000,
+        batch_size=8,
+        shuffle=True,
+        num_workers=8,
+        pin_memory=True,
+        use_start_end_token=False,
+        trim_silence=False,
+        max_duration=60.0,
+        min_duration=1.0,
+        drop_last=True,
+        is_concat=False,
+        concat_sampling_technique="temperature",
+        concat_sampling_temperature=1.0,
+        is_tarred=False,
+        shuffle_n=2048,
+        bucketing_strategy="synced_randomized",
+        bucketing_batch_size=None,
+        batch_augmentor=Hyperparams(
+            prob=0.0,
+            noise_ratio=0.5,
+            min_r_speech=-5.0,
+            max_r_speech=5.0,
+            min_r_noise=-5.0,
+            max_r_noise=20.0,
+            min_mix_rate=0.5,
+            max_mix_rate=0.5,
+            min_num_segments=1,
+            max_num_segments=1,
+            min_num_speakers=1,
+            max_num_speakers=1,
+        ),
+    ),
+    
+    validation_ds=Hyperparams(
+        sample_rate=16000,
+        batch_size=8,
+        shuffle=False,
+        num_workers=8,
+        pin_memory=True,
+        use_start_end_token=False,
+        max_duration=60.0,
+        min_duration=1.0,
+        batch_augmentor=Hyperparams(
+            prob=0.0,
+            noise_ratio=0.5,
+            min_r_speech=-5.0,
+            max_r_speech=5.0,
+            min_r_noise=-5.0,
+            max_r_noise=20.0,
+            min_mix_rate=0.5,
+            max_mix_rate=0.5,
+            min_num_segments=1,
+            max_num_segments=1,
+            min_num_speakers=1,
+            max_num_speakers=1,
+        ),
+    ),
+    
+    # Optimizer config from config.yaml (for Noam scheduler with high initial LR)
+    optim=Hyperparams(
+        name="adamw",
+        lr=5.0,  # High initial LR for Noam scheduler
+        betas=[0.9, 0.98],
+        weight_decay=1e-3,
+        sched=Hyperparams(
+            name="NoamAnnealing",
+            d_model=512,  # Will be resolved from model.encoder.d_model
+            warmup_steps=25000,
+            warmup_ratio=None,
+            min_lr=1e-6,
+        ),
+    ),
 )
 
 HPARAMS_REGISTRY["model"] = model
+
+# ============================================================================
+# Trainer Configuration (from config.yaml, excluding paths)
+# ============================================================================
+
+trainer = Hyperparams(
+    devices=1,
+    num_nodes=1,
+    max_epochs=-1,
+    max_steps=500000,
+    val_check_interval=1.0,
+    accelerator="auto",
+    strategy="auto",
+    accumulate_grad_batches=1,
+    gradient_clip_val=0.0,
+    precision=32,
+    log_every_n_steps=10,
+    enable_progress_bar=True,
+    num_sanity_val_steps=0,
+    check_val_every_n_epoch=1,
+    sync_batchnorm=True,
+    enable_checkpointing=False,
+    logger=False,
+    benchmark=False,
+)
+
+HPARAMS_REGISTRY["trainer"] = trainer
+
+# ============================================================================
+# Experiment Manager Configuration (from config.yaml, excluding paths)
+# ============================================================================
+
+exp_manager = Hyperparams(
+    exp_dir=None,
+    name="SSL-NEST-FastConformer",
+    create_tensorboard_logger=True,
+    create_checkpoint_callback=True,
+    checkpoint_callback_params=Hyperparams(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        always_save_nemo=True,
+        filename="SSL-NEST-FastConformer--{val_loss:.3f}-{step}",
+    ),
+    resume_if_exists=True,
+    resume_ignore_no_checkpoint=True,
+    create_wandb_logger=False,
+    wandb_logger_kwargs=Hyperparams(
+        name=None,
+        project=None,
+    ),
+)
+
+HPARAMS_REGISTRY["exp_manager"] = exp_manager
+
+# ============================================================================
+# Training Configuration (from config.yaml top-level, excluding paths)
+# ============================================================================
+
+training_config = Hyperparams(
+    name="SSL-NEST-FastConformer",
+    seed=42,
+    save_steps="0,1,2,3,4",
+    atol=1e-5,
+    rtol=1e-5,
+)
+
+HPARAMS_REGISTRY["training_config"] = training_config
 
 # ============================================================================
 # Scheduler Configurations
