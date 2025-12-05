@@ -281,139 +281,201 @@ class PureTorchSSLModel(nn.Module):
         model.load_state_dict(checkpoint['model_state_dict'])
         return model
     
-    def forward(
-        self,
-        input_signal: Optional[torch.Tensor] = None,
-        input_signal_length: Optional[torch.Tensor] = None,
-        processed_signal: Optional[torch.Tensor] = None,
-        processed_signal_length: Optional[torch.Tensor] = None,
-        noisy_input_signal: Optional[torch.Tensor] = None,
-        noisy_input_signal_length: Optional[torch.Tensor] = None,
-        processed_noisy_signal: Optional[torch.Tensor] = None,
-        processed_noisy_signal_length: Optional[torch.Tensor] = None,
-        apply_mask: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _extract_batch(self, batch) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pass.
+        Extract audio data from various batch formats.
         
-        Args:
-            input_signal: Clean audio waveform [B, T]
-            input_signal_length: Length of each audio [B]
-            noisy_input_signal: Noisy audio waveform [B, T]
-            noisy_input_signal_length: Length of each noisy audio [B]
-            apply_mask: Whether to apply masking
+        Supports:
+            - Object with .audio, .audio_len, .noisy_audio, .noisy_audio_len
+            - Tuple: (audio, audio_len, noise, noise_len, noisy_audio, noisy_audio_len)
+            - Dict with keys: 'audio', 'audio_len', 'noisy_audio', 'noisy_audio_len'
         
         Returns:
-            log_probs: Log probabilities from decoder
-            encoded_len: Encoded sequence lengths
-            masks: Applied masks
-            tokens: Quantized tokens
+            (audio, audio_len, noisy_audio, noisy_audio_len)
         """
-        # Process clean signal for targets
-        if processed_signal is None and input_signal is not None:
-            processed_signal, processed_signal_length = self.preprocessor(
-                input_signal=input_signal, length=input_signal_length
-            )
+        if hasattr(batch, 'audio'):
+            return batch.audio, batch.audio_len, batch.noisy_audio, batch.noisy_audio_len
+        elif isinstance(batch, (tuple, list)) and len(batch) >= 6:
+            return batch[0], batch[1], batch[4], batch[5]
+        elif isinstance(batch, dict):
+            return batch['audio'], batch['audio_len'], batch['noisy_audio'], batch['noisy_audio_len']
+        else:
+            raise ValueError(f"Unsupported batch format: {type(batch)}")
+    
+    def forward(
+        self,
+        audio: torch.Tensor,
+        audio_len: torch.Tensor,
+        noisy_audio: torch.Tensor,
+        noisy_audio_len: torch.Tensor,
+        apply_mask: bool = True,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass for training/inference.
         
-        # Get tokens from clean signal
-        _, tokens = self.quantizer(input_signal=processed_signal)
+        Args:
+            audio: Clean audio waveform [B, T]
+            audio_len: Length of each clean audio [B]
+            noisy_audio: Noisy audio waveform [B, T]
+            noisy_audio_len: Length of each noisy audio [B]
+            apply_mask: Whether to apply random masking
         
-        # Process noisy signal for input
-        if processed_noisy_signal is None and noisy_input_signal is not None:
-            processed_noisy_signal, processed_noisy_signal_length = self.preprocessor(
-                input_signal=noisy_input_signal, length=noisy_input_signal_length
-            )
+        Returns:
+            Dict containing:
+                - log_probs: Log probabilities from decoder [B, T, C, H]
+                - encoded_len: Encoded sequence lengths [B]
+                - masks: Applied masks [B, D, T]
+                - tokens: Quantized target tokens [B, T, H]
+                - loss: Computed loss (if apply_mask=True)
+        """
+        # 1. Preprocess clean audio -> mel spectrogram for targets
+        processed_clean, _ = self.preprocessor(input_signal=audio, length=audio_len)
         
-        # Apply masking
+        # 2. Get quantized tokens from clean audio
+        _, tokens = self.quantizer(input_signal=processed_clean)
+        
+        # 3. Preprocess noisy audio -> mel spectrogram for encoder input
+        processed_noisy, processed_noisy_len = self.preprocessor(
+            input_signal=noisy_audio, length=noisy_audio_len
+        )
+        
+        # 4. Apply masking and encode
         if self.pre_encoder is not None:
-            # Post-conv masking
+            # Post-conv masking mode
             self.pre_encoder.set_masking_enabled(apply_mask=apply_mask)
             encoded, encoded_len = self.encoder(
-                audio_signal=processed_noisy_signal, length=processed_noisy_signal_length
+                audio_signal=processed_noisy, length=processed_noisy_len
             )
             masks = self.pre_encoder.get_current_mask()
         else:
-            # Pre-conv masking
+            # Pre-conv masking mode (default)
             if apply_mask:
                 masked_signal, masks = self.mask_processor(
-                    input_feats=processed_noisy_signal, input_lengths=processed_noisy_signal_length
+                    input_feats=processed_noisy, input_lengths=processed_noisy_len
                 )
             else:
-                masked_signal = processed_noisy_signal
-                masks = torch.zeros_like(processed_noisy_signal)
+                masked_signal = processed_noisy
+                masks = torch.zeros_like(processed_noisy)
             
             encoded, encoded_len = self.encoder(
-                audio_signal=masked_signal, length=processed_noisy_signal_length
+                audio_signal=masked_signal, length=processed_noisy_len
             )
         
-        # Decode
+        # 5. Decode
         log_probs = self.decoder(encoder_output=encoded)
         
-        return log_probs, encoded_len, masks, tokens
-    
-    def compute_loss(
-        self,
-        log_probs: torch.Tensor,
-        encoded_len: torch.Tensor,
-        masks: torch.Tensor,
-        tokens: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute loss from forward outputs."""
-        return self.loss(
+        # 6. Compute loss
+        loss = self.loss(
             masks=masks,
             decoder_outputs=log_probs,
             targets=tokens,
             decoder_lengths=encoded_len,
         )
+        
+        return {
+            'loss': loss,
+            'log_probs': log_probs,
+            'encoded_len': encoded_len,
+            'masks': masks,
+            'tokens': tokens,
+        }
     
-    def training_step(self, batch) -> torch.Tensor:
+    def training_step(self, batch) -> Dict[str, torch.Tensor]:
         """
-        Single training step.
+        Single training step. Call backward() on loss after this.
         
         Args:
-            batch: Can be:
-                - Object with .audio, .audio_len, .noisy_audio, .noisy_audio_len
-                - Tuple: (audio, audio_len, noise, noise_len, noisy_audio, noisy_audio_len)
-                - Dict with keys: 'audio', 'audio_len', 'noisy_audio', 'noisy_audio_len'
+            batch: Batch data (see _extract_batch for formats)
         
         Returns:
-            Loss tensor
+            Dict with 'loss' and other outputs
         """
-        # Extract data from batch
-        if hasattr(batch, 'audio'):
-            audio = batch.audio
-            audio_len = batch.audio_len
-            noisy_audio = batch.noisy_audio
-            noisy_audio_len = batch.noisy_audio_len
-        elif isinstance(batch, (tuple, list)) and len(batch) >= 6:
-            audio = batch[0]
-            audio_len = batch[1]
-            noisy_audio = batch[4]
-            noisy_audio_len = batch[5]
-        elif isinstance(batch, dict):
-            audio = batch['audio']
-            audio_len = batch['audio_len']
-            noisy_audio = batch['noisy_audio']
-            noisy_audio_len = batch['noisy_audio_len']
-        else:
-            raise ValueError(f"Unsupported batch format: {type(batch)}")
+        audio, audio_len, noisy_audio, noisy_audio_len = self._extract_batch(batch)
+        return self.forward(audio, audio_len, noisy_audio, noisy_audio_len, apply_mask=True)
+    
+    def train_one_step(
+        self, 
+        batch, 
+        optimizer: torch.optim.Optimizer,
+        scheduler=None,
+        grad_clip: float = None,
+    ) -> Dict[str, Any]:
+        """
+        Complete training step with optimizer update.
         
-        # Forward pass
-        log_probs, encoded_len, masks, tokens = self.forward(
-            input_signal=audio,
-            input_signal_length=audio_len,
-            noisy_input_signal=noisy_audio,
-            noisy_input_signal_length=noisy_audio_len,
-            apply_mask=True,
-        )
+        Args:
+            batch: Batch data
+            optimizer: Optimizer instance
+            scheduler: Optional LR scheduler
+            grad_clip: Optional gradient clipping value
         
-        # Compute loss
-        return self.compute_loss(log_probs, encoded_len, masks, tokens)
+        Returns:
+            Dict with 'loss', 'lr', and other metrics
+        """
+        optimizer.zero_grad()
+        
+        outputs = self.training_step(batch)
+        loss = outputs['loss']
+        
+        loss.backward()
+        
+        # Gradient clipping
+        if grad_clip is not None and grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
+        
+        optimizer.step()
+        
+        if scheduler is not None:
+            scheduler.step()
+        
+        return {
+            'loss': loss.item(),
+            'lr': optimizer.param_groups[0]['lr'],
+        }
     
     @torch.no_grad()
-    def validation_step(self, batch) -> torch.Tensor:
-        """Single validation step (no gradients)."""
-        return self.training_step(batch)
+    def validation_step(self, batch) -> Dict[str, Any]:
+        """
+        Single validation step (no gradients).
+        
+        Returns:
+            Dict with 'loss' and metrics
+        """
+        audio, audio_len, noisy_audio, noisy_audio_len = self._extract_batch(batch)
+        outputs = self.forward(audio, audio_len, noisy_audio, noisy_audio_len, apply_mask=True)
+        
+        return {
+            'loss': outputs['loss'].item(),
+            'batch_size': audio.size(0),
+        }
+    
+    @torch.no_grad()
+    def validate_epoch(self, dataloader) -> Dict[str, float]:
+        """
+        Run validation on entire dataloader.
+        
+        Args:
+            dataloader: Validation data loader
+        
+        Returns:
+            Dict with averaged metrics
+        """
+        self.eval()
+        
+        total_loss = 0.0
+        total_samples = 0
+        
+        for batch in dataloader:
+            result = self.validation_step(batch)
+            total_loss += result['loss'] * result['batch_size']
+            total_samples += result['batch_size']
+        
+        self.train()
+        
+        return {
+            'val_loss': total_loss / max(total_samples, 1),
+            'val_samples': total_samples,
+        }
     
     def save_checkpoint(self, path: str, optimizer=None, epoch: int = 0, step: int = 0):
         """Save model checkpoint."""
