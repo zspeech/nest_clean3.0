@@ -35,6 +35,7 @@ from typing import Optional, Tuple, Dict, Any
 import torch
 import torch.nn as nn
 import numpy as np
+import math
 import yaml
 
 # Local imports
@@ -46,7 +47,7 @@ from modules.ssl_modules.multi_softmax_decoder import MultiSoftmaxDecoder
 from losses.ssl_losses.mlm import MultiMLMLoss
 from hparams import Hyperparams, setup_hparams, HPARAMS_REGISTRY
 
-__all__ = ['PureTorchSSLModel', 'create_optimizer', 'create_scheduler']
+__all__ = ['PureTorchSSLModel', 'create_optimizer', 'create_scheduler', 'get_lr_scheduler']
 
 
 def _load_yaml_config(config_path: str) -> Hyperparams:
@@ -471,3 +472,52 @@ def create_scheduler(optimizer: torch.optim.Optimizer, cfg: Hyperparams, num_tra
         return torch.optim.lr_scheduler.LambdaLR(optimizer, cosine_with_warmup)
     
     return None
+
+
+def get_lr_scheduler(opt, hps):
+    """
+    Create learning rate scheduler based on Optimizer hyperparameters.
+    
+    Args:
+        opt: Optimizer instance
+        hps: Hyperparams config with Optimizer settings
+    
+    Returns:
+        LambdaLR scheduler
+    """
+    def _get_cosine_schedule_with_warmup_lr_lambda(
+        current_step: int, *, num_warmup_steps: int, num_training_steps: int, num_cycles: float
+    ):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        if current_step > num_training_steps:
+            return hps.Optimizer.lr_min_scale
+        
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(hps.Optimizer.lr_min_scale, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+    
+    def lr_lambda(step):
+        if hps.Optimizer.lr_use_linear_decay:
+            lr_scale = hps.Optimizer.lr_scale * min(1.0, step / hps.Optimizer.lr_warmup)
+            decay = max(hps.Optimizer.lr_min_scale, 1.0 - max(0.0, step - hps.Optimizer.lr_start_linear_decay) / hps.Optimizer.lr_decay)
+            if decay == 0.0:
+                print("Reached end of training")
+            return lr_scale * decay
+        
+        elif hps.Optimizer.lr_use_cosine_decay:
+            return _get_cosine_schedule_with_warmup_lr_lambda(
+                step, 
+                num_warmup_steps=hps.Optimizer.lr_warmup,
+                num_training_steps=hps.Optimizer.lr_decay,
+                num_cycles=0.5
+            )
+        
+        elif hps.Optimizer.lr_use_constant:
+            return 1.0
+        
+        else:
+            # Default: exponential decay with warmup
+            return hps.Optimizer.lr_scale * (hps.Optimizer.lr_gamma ** (step // hps.Optimizer.lr_decay)) * min(1.0, step / hps.Optimizer.lr_warmup)
+    
+    shd = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+    return shd
