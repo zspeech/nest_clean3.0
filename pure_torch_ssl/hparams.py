@@ -102,7 +102,7 @@ def setup_hparams(hparam_set_names, kwargs):
 # Default Configurations
 # ============================================================================
 
-# Base defaults (from user's example)
+# Base defaults (from user's example + SSL model config)
 defaults = Hyperparams(
     project="ssl_nest",
     train=True,
@@ -131,6 +131,56 @@ defaults = Hyperparams(
     log_steps=100,
     save=True,
     save_iters=10000,
+    # SSL Model config (120M - Default)
+    sample_rate=16000,
+    num_classes=8192,
+    num_books=1,
+    code_dim=16,
+    squeeze_single=False,
+    mask_position="pre_conv",
+    
+    preprocessor=Hyperparams(
+        features=80,
+        window_size=0.025,
+        window_stride=0.01,
+        n_fft=512,
+        normalize="per_feature",
+        log=True,
+        dither=0.0,
+        pad_to=16,
+    ),
+    
+    encoder=Hyperparams(
+        n_layers=17,
+        d_model=512,
+        n_heads=8,
+        subsampling="dw_striding",
+        subsampling_factor=8,
+        subsampling_conv_channels=256,
+        ff_expansion_factor=4,
+        conv_kernel_size=9,
+        dropout=0.1,
+        dropout_pre_encoder=0.1,
+        dropout_emb=0.0,
+        dropout_att=0.1,
+        use_bias=True,
+        xscaling=True,
+    ),
+    
+    masking=Hyperparams(
+        block_size=40,
+        mask_prob=0.01,
+        freeze=True,
+        allow_overlap=True,
+    ),
+    
+    decoder=Hyperparams(
+        use_bias=True,
+    ),
+    
+    loss=Hyperparams(
+        mask_threshold=0.8,
+    ),
 )
 
 HPARAMS_REGISTRY["defaults"] = defaults
@@ -205,285 +255,6 @@ Optimizer = Hyperparams(
 HPARAMS_REGISTRY["Optimizer"] = Optimizer
 
 # ============================================================================
-# SSL Model Configurations
-# ============================================================================
-
-# SSL Model - Small (14M)
-ssl_model_small = Hyperparams(
-    sample_rate=16000,
-    num_classes=8192,
-    num_books=1,
-    code_dim=16,
-    squeeze_single=False,
-    mask_position="pre_conv",
-    
-    preprocessor=Hyperparams(
-        features=80,
-        window_size=0.025,
-        window_stride=0.01,
-        n_fft=512,
-        normalize="per_feature",
-        log=True,
-        dither=0.0,
-        pad_to=16,
-    ),
-    
-    encoder=Hyperparams(
-        n_layers=16,
-        d_model=176,
-        n_heads=4,
-        subsampling="dw_striding",
-        subsampling_factor=8,
-        subsampling_conv_channels=256,
-        ff_expansion_factor=4,
-        conv_kernel_size=9,
-        dropout=0.1,
-        dropout_pre_encoder=0.1,
-        dropout_emb=0.0,
-        dropout_att=0.1,
-        use_bias=True,
-        xscaling=True,
-    ),
-    
-    masking=Hyperparams(
-        block_size=40,
-        mask_prob=0.01,
-        freeze=True,
-        allow_overlap=True,
-    ),
-    
-    decoder=Hyperparams(
-        use_bias=True,
-    ),
-    
-    loss=Hyperparams(
-        mask_threshold=0.8,
-    ),
-)
-
-HPARAMS_REGISTRY["ssl_model_small"] = ssl_model_small
-
-# SSL Model - Medium (32M)
-ssl_model_medium = Hyperparams(
-    sample_rate=16000,
-    num_classes=8192,
-    num_books=1,
-    code_dim=16,
-    squeeze_single=False,
-    mask_position="pre_conv",
-    
-    preprocessor=Hyperparams(
-        features=80,
-        window_size=0.025,
-        window_stride=0.01,
-        n_fft=512,
-        normalize="per_feature",
-        log=True,
-        dither=0.0,
-        pad_to=16,
-    ),
-    
-    encoder=Hyperparams(
-        n_layers=16,
-        d_model=256,
-        n_heads=4,
-        subsampling="dw_striding",
-        subsampling_factor=8,
-        subsampling_conv_channels=256,
-        ff_expansion_factor=4,
-        conv_kernel_size=9,
-        dropout=0.1,
-        dropout_pre_encoder=0.1,
-        dropout_emb=0.0,
-        dropout_att=0.1,
-        use_bias=True,
-        xscaling=True,
-    ),
-    
-    masking=Hyperparams(
-        block_size=40,
-        mask_prob=0.01,
-        freeze=True,
-        allow_overlap=True,
-    ),
-    
-    decoder=Hyperparams(
-        use_bias=True,
-    ),
-    
-    loss=Hyperparams(
-        mask_threshold=0.8,
-    ),
-)
-
-HPARAMS_REGISTRY["ssl_model_medium"] = ssl_model_medium
-
-# SSL Model - Large (120M) - Default
-ssl_model_large = Hyperparams(
-    sample_rate=16000,
-    num_classes=8192,
-    num_books=1,
-    code_dim=16,
-    squeeze_single=False,
-    mask_position="pre_conv",
-    
-    preprocessor=Hyperparams(
-        features=80,
-        window_size=0.025,
-        window_stride=0.01,
-        n_fft=512,
-        normalize="per_feature",
-        log=True,
-        dither=0.0,
-        pad_to=16,
-    ),
-    
-    encoder=Hyperparams(
-        n_layers=17,
-        d_model=512,
-        n_heads=8,
-        subsampling="dw_striding",
-        subsampling_factor=8,
-        subsampling_conv_channels=256,
-        ff_expansion_factor=4,
-        conv_kernel_size=9,
-        dropout=0.1,
-        dropout_pre_encoder=0.1,
-        dropout_emb=0.0,
-        dropout_att=0.1,
-        use_bias=True,
-        xscaling=True,
-    ),
-    
-    masking=Hyperparams(
-        block_size=40,
-        mask_prob=0.01,
-        freeze=True,
-        allow_overlap=True,
-    ),
-    
-    decoder=Hyperparams(
-        use_bias=True,
-    ),
-    
-    loss=Hyperparams(
-        mask_threshold=0.8,
-    ),
-)
-
-HPARAMS_REGISTRY["ssl_model_large"] = ssl_model_large
-
-# SSL Model - XLarge (616M)
-ssl_model_xlarge = Hyperparams(
-    sample_rate=16000,
-    num_classes=8192,
-    num_books=1,
-    code_dim=16,
-    squeeze_single=False,
-    mask_position="pre_conv",
-    
-    preprocessor=Hyperparams(
-        features=80,
-        window_size=0.025,
-        window_stride=0.01,
-        n_fft=512,
-        normalize="per_feature",
-        log=True,
-        dither=0.0,
-        pad_to=16,
-    ),
-    
-    encoder=Hyperparams(
-        n_layers=24,
-        d_model=1024,
-        n_heads=8,
-        subsampling="dw_striding",
-        subsampling_factor=8,
-        subsampling_conv_channels=256,
-        ff_expansion_factor=4,
-        conv_kernel_size=9,
-        dropout=0.1,
-        dropout_pre_encoder=0.1,
-        dropout_emb=0.0,
-        dropout_att=0.1,
-        use_bias=False,
-        xscaling=False,
-    ),
-    
-    masking=Hyperparams(
-        block_size=40,
-        mask_prob=0.01,
-        freeze=True,
-        allow_overlap=True,
-    ),
-    
-    decoder=Hyperparams(
-        use_bias=False,
-    ),
-    
-    loss=Hyperparams(
-        mask_threshold=0.8,
-    ),
-)
-
-HPARAMS_REGISTRY["ssl_model_xlarge"] = ssl_model_xlarge
-
-# SSL Model - XXLarge (1.2B)
-ssl_model_xxlarge = Hyperparams(
-    sample_rate=16000,
-    num_classes=8192,
-    num_books=1,
-    code_dim=16,
-    squeeze_single=False,
-    mask_position="pre_conv",
-    
-    preprocessor=Hyperparams(
-        features=80,
-        window_size=0.025,
-        window_stride=0.01,
-        n_fft=512,
-        normalize="per_feature",
-        log=True,
-        dither=0.0,
-        pad_to=16,
-    ),
-    
-    encoder=Hyperparams(
-        n_layers=42,
-        d_model=1024,
-        n_heads=8,
-        subsampling="dw_striding",
-        subsampling_factor=8,
-        subsampling_conv_channels=256,
-        ff_expansion_factor=4,
-        conv_kernel_size=5,
-        dropout=0.1,
-        dropout_pre_encoder=0.1,
-        dropout_emb=0.0,
-        dropout_att=0.1,
-        use_bias=False,
-        xscaling=False,
-    ),
-    
-    masking=Hyperparams(
-        block_size=40,
-        mask_prob=0.01,
-        freeze=True,
-        allow_overlap=True,
-    ),
-    
-    decoder=Hyperparams(
-        use_bias=False,
-    ),
-    
-    loss=Hyperparams(
-        mask_threshold=0.8,
-    ),
-)
-
-HPARAMS_REGISTRY["ssl_model_xxlarge"] = ssl_model_xxlarge
-
-# ============================================================================
 # Scheduler Configurations
 # ============================================================================
 
@@ -522,14 +293,14 @@ def get_config(name: str, overrides: dict = None) -> Hyperparams:
     Get a registered config with optional overrides.
     
     Args:
-        name: Name of registered config (e.g., "ssl_model_large")
+        name: Name of registered config (e.g., "defaults")
         overrides: Optional dict of overrides
     
     Returns:
         Hyperparams config
     
     Example:
-        cfg = get_config("ssl_model_large", {"Optimizer": {"lr": 5e-5}})
+        cfg = get_config("defaults", {"Optimizer": {"lr": 5e-5}})
     """
     if name not in HPARAMS_REGISTRY:
         available = list(HPARAMS_REGISTRY.keys())

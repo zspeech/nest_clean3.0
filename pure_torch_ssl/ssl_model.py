@@ -103,8 +103,8 @@ class PureTorchSSLModel(nn.Module):
         self.cfg = cfg
         
         # Merge with defaults from registry if needed
-        if 'ssl_model_large' in HPARAMS_REGISTRY:
-            defaults = setup_hparams(HPARAMS_REGISTRY['ssl_model_large'], {})
+        if 'defaults' in HPARAMS_REGISTRY:
+            defaults = setup_hparams(HPARAMS_REGISTRY['defaults'], {})
             for key in defaults:
                 if key not in cfg:
                     cfg[key] = defaults[key]
