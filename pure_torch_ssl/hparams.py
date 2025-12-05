@@ -190,6 +190,7 @@ Optimizer = Hyperparams(
     lr_decay=10000000000.0,
     lr_use_cosine_decay=False,
     lr_use_constant=False,
+    lr_use_noam=False,  # Use Noam scheduler
     lr_gamma=1.0,
     ignore_grad_norm=0,
     optimizer_name="adamw",  # adamw, adam, sgd
